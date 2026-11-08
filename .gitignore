@@ -1,0 +1,4 @@
+/build*/
+/target/
+*.png
+!data/**/*.png
