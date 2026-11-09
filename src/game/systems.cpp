@@ -252,7 +252,7 @@ bool updateWaves(GameData& g) {
         onWaveCleared(g);
         g.modeVictory = true;
         g.state = GameState::GameOver;
-        if (!isPracticeMode(g)) saveHighScore(g.score, g.wave);
+        endRunScores(g);
         sfx::playBigExplosion();
         return true;
       }

@@ -46,6 +46,8 @@ enum class ParticleType { Explosion, Trail, Spark, Star, Ring, Ember, Score };
 enum class PowerUpType { Spread, Speed, Shield, Bomb, Heal, Weapon };
 enum class HazardType { Asteroid, Turret, Teleporter, None };
 enum class GameState { Menu, Playing, Paused, GameOver };
+// Title-screen rows the cursor moves between (StartWave only in Practice).
+enum class MenuRow { Mode, Aircraft, Weapon, Difficulty, StartWave, Start };
 
 struct Particle {
   float x, y, vx, vy, life, maxLife, size;
@@ -115,6 +117,18 @@ struct HighScore {
   int64_t score;
   std::string date;
   int wave;
+  std::string name;  // up to NAME_LEN of NAME_CHARS; empty for old saves
+};
+
+constexpr int NAME_LEN = 8;
+constexpr const char* NAME_CHARS = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+// Typing a name for a new high score, on the game-over screen.
+struct NameEntry {
+  bool active = false;
+  std::string buf = std::string(NAME_LEN, ' ');
+  int cursor = 0;
+  bool fresh = true;  // still the remembered name: typing replaces it whole
 };
 
 struct ScreenShake {
@@ -200,6 +214,9 @@ struct GameData {
   bool autoFire = true;
   bool practiceInvincible = false;
   int practiceStartWave = 1;
+  MenuRow menuRow = MenuRow::Mode;
+  NameEntry nameEntry;
+  int highScoreRank = -1;  // this run's place in the table, -1 none
 };
 
 // ---- static data (data.cpp) ----
@@ -292,7 +309,10 @@ constexpr int STORY_STAGE_CLEAR_COINS = 25;
 constexpr int DAILY_COMPLETE_COINS = 100;
 constexpr int DAILY_COMPLETE_WAVE = 10;
 const std::vector<HighScore>& loadHighScores();
-void saveHighScore(int64_t score, int wave);
+bool qualifiesForHighScore(int64_t score);  // would make the top 10
+// Stores the score and returns its place in the table (0 = best), or -1.
+int saveHighScore(int64_t score, int wave, const std::string& name);
+const std::string& lastHighScoreName();  // to start the next entry from
 
 // ---- modes (modes.cpp) ----
 GameMode nextGameMode(GameMode m, int dir);
@@ -414,6 +434,15 @@ void cyclePracticeStartWave(GameData& g, int dir);
 void resetGame(GameData& g);
 bool startRun(GameData& g);  // menu / game over → playing (co-op aware)
 void returnToMenu(GameData& g);
+void menuMove(GameData& g, int dir);    // cursor up/down, wraps
+void menuChange(GameData& g, int dir);  // left/right on the cursor's row
+// Run over: a top-10 score opens the name entry, saved on confirm.
+void endRunScores(GameData& g);
+void nameEntryMove(GameData& g, int dir);   // left/right between letters
+void nameEntryCycle(GameData& g, int dir);  // up/down through NAME_CHARS
+void nameEntryType(GameData& g, char c);    // keyboard: set and advance
+void nameEntryBackspace(GameData& g);
+void nameEntryConfirm(GameData& g);
 void update(GameData& g, InputState& input, float dt);
 void updateBackground(GameData& g, float dt);
 

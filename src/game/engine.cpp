@@ -1,5 +1,6 @@
 // engine.ts and player-factory.ts (the coop network bits dropped; co-op
 // is local, the second ship driven by a second controller).
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <random>
@@ -119,6 +120,8 @@ void resetGame(GameData& g) {
   g.shotsFired = g.shotsHit = 0;
   g.damageDealt = 0;
   g.enemiesKilled = 0;
+  g.nameEntry = {};
+  g.highScoreRank = -1;
   g.state = GameState::Playing;
   if (g.gameMode == GameMode::Daily) {
     g.rng = Rng(static_cast<uint32_t>(g.dailySeed));
@@ -158,6 +161,8 @@ bool startRun(GameData& g) {
 // Not in the original, which has no way back from a run but a page reload.
 void returnToMenu(GameData& g) {
   g.state = GameState::Menu;
+  g.nameEntry = {};
+  g.highScoreRank = -1;
   g.bullets.clear();
   g.enemies.clear();
   g.powerUps.clear();
@@ -169,6 +174,86 @@ void returnToMenu(GameData& g) {
   g.slowMotion = 1;
   g.slowMotionTimer = 0;
   ensureValidMenuSelection(g);
+}
+
+static std::vector<MenuRow> menuRows(const GameData& g) {
+  std::vector<MenuRow> rows = {MenuRow::Mode, MenuRow::Aircraft, MenuRow::Weapon, MenuRow::Difficulty};
+  if (isPracticeMode(g)) rows.push_back(MenuRow::StartWave);
+  rows.push_back(MenuRow::Start);
+  return rows;
+}
+
+void menuMove(GameData& g, int dir) {
+  const auto rows = menuRows(g);
+  const int n = static_cast<int>(rows.size());
+  int i = 0;
+  while (i < n && rows[i] != g.menuRow) i++;
+  g.menuRow = rows[((i < n ? i : 0) + dir + n) % n];
+}
+
+void menuChange(GameData& g, int dir) {
+  switch (g.menuRow) {
+    case MenuRow::Mode: cycleGameModeSelection(g, dir); break;
+    case MenuRow::Aircraft: cycleAircraftSelection(g, dir); break;
+    case MenuRow::Weapon: cycleWeaponSelection(g, dir); break;
+    case MenuRow::Difficulty: cycleDifficultySelection(g, dir); break;
+    case MenuRow::StartWave: cyclePracticeStartWave(g, dir); break;
+    case MenuRow::Start: break;
+  }
+}
+
+void endRunScores(GameData& g) {
+  g.highScoreRank = -1;
+  g.nameEntry = {};
+  if (isPracticeMode(g) || !qualifiesForHighScore(g.score)) return;
+  // start from the last name, cursor on its last letter, so a returning
+  // player only confirms
+  NameEntry& n = g.nameEntry;
+  n.active = true;
+  const std::string& last = lastHighScoreName();
+  for (size_t i = 0; i < last.size() && i < n.buf.size(); i++) n.buf[i] = last[i];
+  n.cursor = last.empty() ? 0 : static_cast<int>(std::min(last.size(), n.buf.size()) - 1);
+  if (last.empty()) n.buf[0] = 'A';
+}
+
+void nameEntryMove(GameData& g, int dir) {
+  NameEntry& n = g.nameEntry;
+  n.fresh = false;
+  n.cursor = std::clamp(n.cursor + dir, 0, NAME_LEN - 1);
+}
+
+void nameEntryCycle(GameData& g, int dir) {
+  NameEntry& n = g.nameEntry;
+  n.fresh = false;
+  const std::string chars = NAME_CHARS;
+  const int count = static_cast<int>(chars.size());
+  int i = static_cast<int>(chars.find(n.buf[n.cursor]));
+  if (i < 0) i = 0;
+  n.buf[n.cursor] = chars[(i + dir + count) % count];
+}
+
+void nameEntryType(GameData& g, char c) {
+  NameEntry& n = g.nameEntry;
+  if (n.fresh) {
+    n.buf.assign(NAME_LEN, ' ');
+    n.cursor = 0;
+  }
+  n.buf[n.cursor] = c;
+  nameEntryMove(g, 1);
+}
+
+void nameEntryBackspace(GameData& g) {
+  NameEntry& n = g.nameEntry;
+  n.fresh = false;
+  // on a blank slot, step back first: deletes the letter before, like a text field
+  if (n.buf[n.cursor] == ' ') nameEntryMove(g, -1);
+  n.buf[n.cursor] = ' ';
+}
+
+void nameEntryConfirm(GameData& g) {
+  if (!g.nameEntry.active) return;
+  g.nameEntry.active = false;
+  g.highScoreRank = saveHighScore(g.score, g.wave, g.nameEntry.buf);
 }
 
 void update(GameData& g, InputState& input, float dt) {

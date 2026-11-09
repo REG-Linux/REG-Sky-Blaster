@@ -2,6 +2,7 @@
 // one key=value file in the save directory, rewritten on every change.
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -23,6 +24,7 @@ struct Save {
   bool achievements[6] = {};
   LifetimeStats stats;
   std::vector<HighScore> highScores;
+  std::string lastName;
 };
 
 std::string g_path;
@@ -45,6 +47,18 @@ std::string joinList(const char* (&keys)[N], const bool (&on)[N]) {
   return s;
 }
 
+// Only NAME_CHARS, at most NAME_LEN, no leading/trailing spaces.
+std::string cleanName(const std::string& in) {
+  std::string out;
+  for (char c : in) {
+    if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+    if (std::strchr(NAME_CHARS, c) && c != '\0' && out.size() < static_cast<size_t>(NAME_LEN)) out += c;
+  }
+  auto b = out.find_first_not_of(' ');
+  if (b == std::string::npos) return "";
+  return out.substr(b, out.find_last_not_of(' ') - b + 1);
+}
+
 void load() {
   std::ifstream in(g_path);
   std::string line;
@@ -59,14 +73,18 @@ void load() {
     else if (k == "enemy_kills") g_save.stats.enemyKills = std::atoi(v.c_str());
     else if (k == "boss_kills") g_save.stats.bossKills = std::atoi(v.c_str());
     else if (k == "highscore") {
-      // score,wave,date
-      HighScore hs{0, "", 0};
+      // score,wave,date[,name]
+      HighScore hs{0, "", 0, ""};
       auto c1 = v.find(','), c2 = v.find(',', c1 == std::string::npos ? c1 : c1 + 1);
       if (c1 == std::string::npos || c2 == std::string::npos) continue;
+      auto c3 = v.find(',', c2 + 1);
       hs.score = std::atoll(v.substr(0, c1).c_str());
       hs.wave = std::atoi(v.substr(c1 + 1, c2 - c1 - 1).c_str());
-      hs.date = v.substr(c2 + 1);
+      hs.date = v.substr(c2 + 1, c3 == std::string::npos ? std::string::npos : c3 - c2 - 1);
+      if (c3 != std::string::npos) hs.name = cleanName(v.substr(c3 + 1));
       g_save.highScores.push_back(hs);
+    } else if (k == "last_name") {
+      g_save.lastName = cleanName(v);
     }
   }
   g_save.aircraft[0] = g_save.weapons[0] = true;
@@ -88,7 +106,8 @@ void store() {
     out << "enemy_kills=" << g_save.stats.enemyKills << "\n";
     out << "boss_kills=" << g_save.stats.bossKills << "\n";
     for (const HighScore& h : g_save.highScores)
-      out << "highscore=" << h.score << "," << h.wave << "," << h.date << "\n";
+      out << "highscore=" << h.score << "," << h.wave << "," << h.date << "," << h.name << "\n";
+    out << "last_name=" << g_save.lastName << "\n";
     if (!out.flush()) return;
   }
   std::error_code ec;
@@ -175,16 +194,28 @@ int coinRewardForEnemy(EnemyType t) {
 
 const std::vector<HighScore>& loadHighScores() { return g_save.highScores; }
 
-void saveHighScore(int64_t score, int wave) {
+bool qualifiesForHighScore(int64_t score) {
+  // a tie goes below the scores already there, as stable_sort keeps it
+  return g_save.highScores.size() < 10 || score > g_save.highScores.back().score;
+}
+
+const std::string& lastHighScoreName() { return g_save.lastName; }
+
+int saveHighScore(int64_t score, int wave, const std::string& rawName) {
   std::time_t now = std::time(nullptr);
   std::tm tm{};
   localtime_r(&now, &tm);
   char date[40];
   // en-US toLocaleDateString(): M/D/YYYY
   std::snprintf(date, sizeof date, "%d/%d/%d", tm.tm_mon + 1, tm.tm_mday, tm.tm_year + 1900);
-  g_save.highScores.push_back({score, date, wave});
-  std::stable_sort(g_save.highScores.begin(), g_save.highScores.end(),
-                   [](const HighScore& a, const HighScore& b) { return a.score > b.score; });
-  if (g_save.highScores.size() > 10) g_save.highScores.resize(10);
+  const std::string name = cleanName(rawName);
+  auto& list = g_save.highScores;
+  // after every score >= this one: where stable_sort of the original put it
+  auto at = std::find_if(list.begin(), list.end(), [&](const HighScore& h) { return h.score < score; });
+  const int rank = static_cast<int>(at - list.begin());
+  list.insert(at, {score, date, wave, name});
+  if (list.size() > 10) list.resize(10);
+  if (!name.empty()) g_save.lastName = name;
   store();
+  return rank < 10 ? rank : -1;
 }

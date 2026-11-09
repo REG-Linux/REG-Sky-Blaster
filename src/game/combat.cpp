@@ -249,7 +249,7 @@ void killPlayer(GameData& g, Player& p) {
   g.flashAlpha = 0.8f;
   g.flashColor = C("#fff");
   sfx::playGameOver();
-  if (!isPracticeMode(g)) saveHighScore(g.score, g.wave);
+  endRunScores(g);
 }
 
 // ---- skills ----

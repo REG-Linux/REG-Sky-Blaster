@@ -278,6 +278,7 @@ int main(int argc, char** argv) {
     SDL_GL_SwapWindow(win);
   }
 
+  nameEntryConfirm(game);  // quitting mid-entry still keeps the score
   audio::shutdown();
 #if defined(SKYBLASTER_GL2)
   nvgDeleteGL2(vg);

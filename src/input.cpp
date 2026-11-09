@@ -84,22 +84,16 @@ void Input::press(GameData& g, InputState& p1, int padIndex, Button b) {
   switch (g.state) {
     case GameState::Menu: {
       if (padIndex > 1) return;
-      const bool back = held(padIndex, Back);
       switch (b) {
-        case Up: cycleGameModeSelection(g, -1), menuSound(); break;
-        case Down: cycleGameModeSelection(g, 1), menuSound(); break;
+        case Up: menuMove(g, -1), menuSound(); break;
+        case Down: menuMove(g, 1), menuSound(); break;
         case Left:
-        case Right: {
-          int dir = b == Left ? -1 : 1;
-          if (back && isPracticeMode(g)) cyclePracticeStartWave(g, dir);
-          else cycleAircraftSelection(g, dir);
-          menuSound();
+        case Right:
+          if (g.menuRow != MenuRow::Start) {
+            menuChange(g, b == Left ? -1 : 1);
+            menuSound();
+          }
           break;
-        }
-        case L1: cycleWeaponSelection(g, -1), menuSound(); break;
-        case R1: cycleWeaponSelection(g, 1), menuSound(); break;
-        case L2: cycleDifficultySelection(g, -1), menuSound(); break;
-        case R2: cycleDifficultySelection(g, 1), menuSound(); break;
         case North: {
           bool a = tryUnlockSelectedAircraft(g);
           bool w = tryUnlockSelectedWeapon(g);
@@ -135,6 +129,20 @@ void Input::press(GameData& g, InputState& p1, int padIndex, Button b) {
       }
       break;
     case GameState::GameOver:
+      if (g.nameEntry.active) {
+        if (padIndex != 0) return;  // player 1 names the run
+        switch (b) {
+          case Up: nameEntryCycle(g, 1); break;
+          case Down: nameEntryCycle(g, -1); break;
+          case Left: nameEntryMove(g, -1); break;
+          case Right: nameEntryMove(g, 1); break;
+          case East: nameEntryBackspace(g); break;
+          case South:
+          case Start: nameEntryConfirm(g), sfx::playPowerUp(); break;
+          default: break;
+        }
+        break;
+      }
       if (b == South || b == Start) {
         if (startRun(g)) menuSound();
       } else if (b == East) {
@@ -182,7 +190,7 @@ bool Input::handleEvent(const SDL_Event& e, GameData& g, InputState& p1) {
       };
       if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER) edge(L2, e.gaxis.value / 32767.0f);
       else if (e.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) edge(R2, e.gaxis.value / 32767.0f);
-      else if (g.state == GameState::Menu) {
+      else if (g.state == GameState::Menu || g.nameEntry.active) {
         float x, y;
         axes(i, x, y);
         edge(Left, -x);
@@ -206,6 +214,19 @@ bool Input::handleEvent(const SDL_Event& e, GameData& g, InputState& p1) {
 // The original keyboard layout.
 bool Input::keyDown(GameData& g, InputState& p1, SDL_Scancode sc) {
   const bool menu = g.state == GameState::Menu;
+  if (g.state == GameState::GameOver && g.nameEntry.active) {
+    if (sc >= SDL_SCANCODE_A && sc <= SDL_SCANCODE_Z) nameEntryType(g, static_cast<char>('A' + (sc - SDL_SCANCODE_A)));
+    else if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_9) nameEntryType(g, static_cast<char>('1' + (sc - SDL_SCANCODE_1)));
+    else if (sc == SDL_SCANCODE_0) nameEntryType(g, '0');
+    else if (sc == SDL_SCANCODE_SPACE) nameEntryType(g, ' ');
+    else if (sc == SDL_SCANCODE_BACKSPACE) nameEntryBackspace(g);
+    else if (sc == SDL_SCANCODE_UP) nameEntryCycle(g, 1);
+    else if (sc == SDL_SCANCODE_DOWN) nameEntryCycle(g, -1);
+    else if (sc == SDL_SCANCODE_LEFT) nameEntryMove(g, -1);
+    else if (sc == SDL_SCANCODE_RIGHT) nameEntryMove(g, 1);
+    else if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_KP_ENTER) nameEntryConfirm(g), sfx::playPowerUp();
+    return true;
+  }
   switch (sc) {
     case SDL_SCANCODE_ESCAPE:
       if (menu) return false;
@@ -223,18 +244,12 @@ bool Input::keyDown(GameData& g, InputState& p1, SDL_Scancode sc) {
       break;
     case SDL_SCANCODE_LEFT:
     case SDL_SCANCODE_A:
-      if (menu) cycleAircraftSelection(g, -1), menuSound();
+      if (menu) press(g, p1, 0, Left);
       break;
     case SDL_SCANCODE_RIGHT:
     case SDL_SCANCODE_D:
-      if (menu) cycleAircraftSelection(g, 1), menuSound();
+      if (menu) press(g, p1, 0, Right);
       break;
-    case SDL_SCANCODE_LEFTBRACKET: if (menu) press(g, p1, 0, L1); break;
-    case SDL_SCANCODE_RIGHTBRACKET: if (menu) press(g, p1, 0, R1); break;
-    case SDL_SCANCODE_COMMA: if (menu) press(g, p1, 0, L2); break;
-    case SDL_SCANCODE_PERIOD: if (menu) press(g, p1, 0, R2); break;
-    case SDL_SCANCODE_MINUS: if (menu && isPracticeMode(g)) cyclePracticeStartWave(g, -1), menuSound(); break;
-    case SDL_SCANCODE_EQUALS: if (menu && isPracticeMode(g)) cyclePracticeStartWave(g, 1), menuSound(); break;
     case SDL_SCANCODE_U: if (menu) press(g, p1, 0, North); break;
     case SDL_SCANCODE_SPACE:
     case SDL_SCANCODE_Z:
