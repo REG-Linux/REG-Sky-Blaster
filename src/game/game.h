@@ -11,6 +11,7 @@
 #include "rng.h"
 
 class Canvas;
+class Prims;
 
 // The original field is 400x700. The port keeps one side of it and
 // stretches the other to the screen's shape (setFieldSize), so the game
@@ -212,6 +213,7 @@ struct GameData {
   float damageDealt = 0;
   int enemiesKilled = 0;
   bool autoFire = true;
+  bool showFps = false;  // a frame counter takes the HUD's top line
   bool practiceInvincible = false;
   int practiceStartWave = 1;
   MenuRow menuRow = MenuRow::Mode;
@@ -448,8 +450,8 @@ void updateBackground(GameData& g, float dt);
 
 // ---- render (render_*.cpp) ----
 // Draws the 400x700 play field; the caller sets the transform.
-void renderGame(Canvas& ctx, GameData& g, uint32_t nowMs);
-void drawChapterBackground(Canvas& ctx, const GameData& g);
+void renderGame(Canvas& ctx, Prims& prims, GameData& g, uint32_t nowMs);
+void drawChapterBackground(Prims& prims, const GameData& g, float dim = 1);
 void drawHazards(Canvas& ctx, const GameData& g);
 void drawMenu(Canvas& ctx, GameData& g, uint32_t nowMs);
 void drawHUD(Canvas& ctx, GameData& g);
@@ -457,12 +459,12 @@ void drawGameOver(Canvas& ctx, GameData& g, uint32_t nowMs);
 void drawAchievementToast(Canvas& ctx, const GameData& g);
 void drawLaserBeam(Canvas& ctx, const Player& p);
 void drawPlayer(Canvas& ctx, const GameData& g, const Player& p, uint32_t nowMs);
-void drawBullet(Canvas& ctx, const Bullet& b);
+void drawBullets(Prims& prims, const GameData& g);
 void drawPowerUp(Canvas& ctx, const PowerUp& pw, uint32_t nowMs);
 void drawEnemy(Canvas& ctx, const GameData& g, const Enemy& e, int frame);
-void drawParticles(Canvas& ctx, const GameData& g);
+void drawGlows(Prims& prims, const GameData& g, uint32_t nowMs);
+void drawParticles(Canvas& ctx, Prims& prims, const GameData& g);
 void drawFlashOverlay(Canvas& ctx, const GameData& g);
-void drawDangerVignette(Canvas& ctx, const GameData& g);
 void drawGrazeIndicator(Canvas& ctx, const GameData& g);
 void drawComboBanner(Canvas& ctx, const GameData& g, uint32_t nowMs);
 void drawWaveAnnounce(Canvas& ctx, const GameData& g);

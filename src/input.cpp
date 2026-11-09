@@ -78,8 +78,28 @@ bool Input::held(int padIndex, Button b) const {
   return false;
 }
 
+void Input::track(const GameData& g) {
+  if (g.state == seen_) return;
+  seen_ = g.state;
+  quiet_ = g.state == GameState::GameOver;
+  quietSince_ = SDL_GetTicks();
+}
+
+bool Input::anyHeld() const {
+  for (const Pad& p : pads_) {
+    for (int i = 0; i < SDL_GAMEPAD_BUTTON_COUNT; i++)
+      if (SDL_GetGamepadButton(p.pad, static_cast<SDL_GamepadButton>(i))) return true;
+    for (int a = 0; a < SDL_GAMEPAD_AXIS_COUNT; a++)
+      if (std::fabs(SDL_GetGamepadAxis(p.pad, static_cast<SDL_GamepadAxis>(a)) / 32767.0f) > EDGE_OFF) return true;
+  }
+  for (bool k : keys_)
+    if (k) return true;
+  return false;
+}
+
 // One button press, routed by game state. padIndex 1 is P2.
 void Input::press(GameData& g, InputState& p1, int padIndex, Button b) {
+  if (quiet_) return;
   InputState& in = padIndex == 1 ? g.p2Input : p1;
   switch (g.state) {
     case GameState::Menu: {
@@ -154,6 +174,7 @@ void Input::press(GameData& g, InputState& p1, int padIndex, Button b) {
 }
 
 bool Input::handleEvent(const SDL_Event& e, GameData& g, InputState& p1) {
+  track(g);
   switch (e.type) {
     case SDL_EVENT_QUIT: return false;
     case SDL_EVENT_GAMEPAD_ADDED:
@@ -214,6 +235,7 @@ bool Input::handleEvent(const SDL_Event& e, GameData& g, InputState& p1) {
 // The original keyboard layout.
 bool Input::keyDown(GameData& g, InputState& p1, SDL_Scancode sc) {
   const bool menu = g.state == GameState::Menu;
+  if (quiet_) return true;
   if (g.state == GameState::GameOver && g.nameEntry.active) {
     if (sc >= SDL_SCANCODE_A && sc <= SDL_SCANCODE_Z) nameEntryType(g, static_cast<char>('A' + (sc - SDL_SCANCODE_A)));
     else if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_9) nameEntryType(g, static_cast<char>('1' + (sc - SDL_SCANCODE_1)));
@@ -281,6 +303,9 @@ bool Input::keyDown(GameData& g, InputState& p1, SDL_Scancode sc) {
 }
 
 void Input::poll(GameData& g, InputState& p1) {
+  track(g);
+  // at least half a second, then until all is let go
+  if (quiet_ && SDL_GetTicks() - quietSince_ >= 500 && !anyHeld()) quiet_ = false;
   g.p2Connected = pads_.size() >= 2;
   auto fill = [&](int i, InputState& in, bool withKeys) {
     float x = 0, y = 0;

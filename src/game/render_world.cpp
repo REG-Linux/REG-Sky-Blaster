@@ -2,6 +2,7 @@
 #include <cmath>
 
 #include "../canvas.h"
+#include "../prims.h"
 #include "game.h"
 
 void drawLaserBeam(Canvas& ctx, const Player& p) {
@@ -148,40 +149,24 @@ void drawPlayer(Canvas& ctx, const GameData& g, const Player& p, uint32_t nowMs)
   ctx.restore();
 }
 
-void drawBullet(Canvas& ctx, const Bullet& b) {
-  ctx.save();
-  ctx.translate(b.x, b.y);
-  if (b.isPlayer) {
-    ctx.fillStyle(Gradient::linear(0, -b.height / 2, 0, b.height / 2)
-                      .add(0, C("#fff"))
-                      .add(0.3f, b.color)
-                      .add(1, C("#036")));
-    ctx.fillRect(-b.width / 2, -b.height / 2, b.width, b.height);
-    ctx.save();
-    ctx.lighter(true);
-    ctx.globalAlpha(0.35f);
-    ctx.fillStyle(b.color);
-    ctx.fillRect(-b.width * 1.2f, -b.height / 2, b.width * 2.4f, b.height);
-    ctx.restore();
-  } else {
-    ctx.save();
-    ctx.lighter(true);
-    ctx.globalAlpha(0.3f);
-    ctx.fillStyle(b.color);
-    ctx.beginPath();
-    ctx.arc(0, 0, b.width / 2 + 3, 0, PI * 2);
-    ctx.fill();
-    ctx.restore();
-    ctx.fillStyle(b.color);
-    ctx.beginPath();
-    ctx.arc(0, 0, b.width / 2 + 1, 0, PI * 2);
-    ctx.fill();
-    ctx.fillStyle(C("#fff"));
-    ctx.beginPath();
-    ctx.arc(0, 0, b.width / 4, 0, PI * 2);
-    ctx.fill();
-  }
-  ctx.restore();
+// All bullets through Prims, a pass per layer: enemy glow (lighter), body
+// and core, then player shots and their glow.
+void drawBullets(Prims& prims, const GameData& g) {
+  prims.additive(true);
+  for (const Bullet& b : g.bullets)
+    if (!b.isPlayer) prims.disc(b.x, b.y, b.width / 2 + 3, b.color, 0.3f);
+  prims.additive(false);
+  for (const Bullet& b : g.bullets)
+    if (!b.isPlayer) prims.disc(b.x, b.y, b.width / 2 + 1, b.color, 1);
+  for (const Bullet& b : g.bullets)
+    if (!b.isPlayer) prims.disc(b.x, b.y, b.width / 4, C("#fff"), 1);
+  for (const Bullet& b : g.bullets)
+    if (b.isPlayer)
+      prims.rectV(b.x - b.width / 2, b.y - b.height / 2, b.width, b.height, C("#fff"), 0.3f, b.color, C("#036"), 1);
+  prims.additive(true);
+  for (const Bullet& b : g.bullets)
+    if (b.isPlayer) prims.rect(b.x - b.width * 1.2f, b.y - b.height / 2, b.width * 2.4f, b.height, b.color, 0.35f);
+  prims.additive(false);
 }
 
 void drawPowerUp(Canvas& ctx, const PowerUp& pw, uint32_t nowMs) {
@@ -200,14 +185,7 @@ void drawPowerUp(Canvas& ctx, const PowerUp& pw, uint32_t nowMs) {
     case PowerUpType::Weapon: c = C("#fd4"), ico = "W"; break;
   }
   if (pw.type == PowerUpType::Weapon && pw.weaponId) c = getWeapon(*pw.weaponId).hudColor;
-  ctx.save();
-  ctx.lighter(true);
-  ctx.globalAlpha(0.15f);
-  ctx.fillStyle(c);
-  ctx.beginPath();
-  ctx.arc(0, 0, 18, 0, PI * 2);
-  ctx.fill();
-  ctx.restore();
+  // its glow is in drawGlows
   ctx.fillStyle(c);
   ctx.globalAlpha(0.25f);
   ctx.beginPath();
@@ -233,6 +211,34 @@ void drawPowerUp(Canvas& ctx, const PowerUp& pw, uint32_t nowMs) {
   ctx.restore();
 }
 
+// Every power-up's and enemy's glow in one additive batch: drawn with each
+// object they switched the blending twice per object, a draw call each.
+void drawGlows(Prims& prims, const GameData& g, uint32_t nowMs) {
+  prims.additive(true);
+  const float pulse = 1 + std::sin(static_cast<float>(nowMs) * 0.008f) * 0.15f;
+  for (const PowerUp& pw : g.powerUps) {
+    Color c;
+    switch (pw.type) {
+      case PowerUpType::Spread: c = C("#f80"); break;
+      case PowerUpType::Speed: c = C("#0f8"); break;
+      case PowerUpType::Shield: c = C("#48f"); break;
+      case PowerUpType::Bomb: c = C("#f44"); break;
+      case PowerUpType::Heal: c = C("#4f8"); break;
+      case PowerUpType::Weapon: c = pw.weaponId ? getWeapon(*pw.weaponId).hudColor : C("#fd4"); break;
+    }
+    prims.disc(pw.x, pw.y, 18 * pulse, c, 0.15f);
+  }
+  for (const Enemy& e : g.enemies) {
+    const Color glow = e.type == EnemyType::Boss       ? bossAccentColors(e.bossPattern).glow
+                       : e.type == EnemyType::Healer   ? C("#4f8")
+                       : e.type == EnemyType::Kamikaze ? C("#fa4")
+                       : e.type == EnemyType::Sniper   ? C("#f6a")
+                                                       : C("#ff8844");
+    prims.radial(e.x, e.y - e.height / 3, e.width * 0.4f, glow, TRANSPARENT, 0.2f);
+  }
+  prims.additive(false);
+}
+
 void drawEnemy(Canvas& ctx, const GameData& g, const Enemy& e, int frame) {
   ctx.save();
   ctx.translate(e.x, e.y);
@@ -240,17 +246,7 @@ void drawEnemy(Canvas& ctx, const GameData& g, const Enemy& e, int frame) {
   const float W = e.width, H = e.height;
   const float fr = static_cast<float>(frame);
 
-  ctx.save();
-  ctx.globalAlpha(0.2f);
-  ctx.lighter(true);
-  Color glow = e.type == EnemyType::Boss       ? bossAccentColors(e.bossPattern).glow
-               : e.type == EnemyType::Healer   ? C("#4f8")
-               : e.type == EnemyType::Kamikaze ? C("#fa4")
-               : e.type == EnemyType::Sniper   ? C("#f6a")
-                                               : C("#ff8844");
-  ctx.fillStyle(Gradient::radialGradient(0, -H / 3, 0, 0, -H / 3, W * 0.4f).add(0, glow).add(1, TRANSPARENT));
-  ctx.fillRect(-W, -H, W * 2, H * 0.8f);
-  ctx.restore();
+  // its glow is in drawGlows
 
   if (e.type == EnemyType::Healer) {
     ctx.save();

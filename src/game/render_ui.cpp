@@ -5,6 +5,7 @@
 #include <cstdio>
 
 #include "../canvas.h"
+#include "../prims.h"
 #include "game.h"
 
 namespace {
@@ -33,38 +34,30 @@ std::string scoreLine(int i, const HighScore& s, bool date = true) {
 
 }  // namespace
 
-void drawParticles(Canvas& ctx, const GameData& g) {
-  ctx.save();
-  ctx.lighter(true);  // glow on the dark background
+void drawParticles(Canvas& ctx, Prims& prims, const GameData& g) {
+  prims.additive(true);  // glow on the dark background
   for (const Particle& pt : g.particles) {
     if (pt.type == ParticleType::Score) continue;
-    float a = std::fmax(0, pt.life / pt.maxLife);
-    ctx.globalAlpha(a);
-    ctx.fillStyle(pt.color);
+    const float a = std::fmax(0, pt.life / pt.maxLife);
     if (pt.type == ParticleType::Ring) {
-      float r = (pt.startSize != 0 ? pt.startSize : 30) * (1 - a);
-      ctx.strokeStyle(pt.color);
-      ctx.lineWidth(std::fmax(0.5f, 3 * a));
-      ctx.beginPath();
-      ctx.arc(pt.x, pt.y, r, 0, PI * 2);
-      ctx.stroke();
+      const float r = (pt.startSize != 0 ? pt.startSize : 30) * (1 - a);
+      prims.ring(pt.x, pt.y, r, std::fmax(0.5f, 3 * a), pt.color, a);
     } else if (pt.type == ParticleType::Spark) {
-      ctx.save();
-      ctx.translate(pt.x, pt.y);
-      ctx.rotate(std::atan2(pt.vy, pt.vx));
-      ctx.fillRect(-pt.size, -pt.size / 3, pt.size * 2, pt.size * 0.6f);
-      ctx.restore();
+      // a 2size x 0.6size bar along the direction of travel
+      const float ang = std::atan2(pt.vy, pt.vx), c = std::cos(ang), s = std::sin(ang);
+      const float xs[4] = {-pt.size, pt.size, pt.size, -pt.size};
+      const float ys[4] = {-pt.size / 3, -pt.size / 3, pt.size * 0.6f - pt.size / 3, pt.size * 0.6f - pt.size / 3};
+      float q[8];
+      for (int i = 0; i < 4; i++) q[i * 2] = pt.x + xs[i] * c - ys[i] * s, q[i * 2 + 1] = pt.y + xs[i] * s + ys[i] * c;
+      prims.quad(q, pt.color, a);
     } else if (pt.type == ParticleType::Ember) {
-      ctx.beginPath();
-      ctx.arc(pt.x, pt.y, std::fmax(0.3f, pt.size * a * 0.7f), 0, PI * 2);
-      ctx.fill();
+      prims.disc(pt.x, pt.y, std::fmax(0.3f, pt.size * a * 0.7f), pt.color, a);
     } else {
-      ctx.beginPath();
-      ctx.arc(pt.x, pt.y, std::fmax(0.5f, pt.size * a), 0, PI * 2);
-      ctx.fill();
+      prims.disc(pt.x, pt.y, std::fmax(0.5f, pt.size * a), pt.color, a);
     }
   }
-  ctx.restore();
+  prims.additive(false);
+  ctx.drawPrims(prims);
 
   for (const Particle& pt : g.particles) {
     if (pt.type != ParticleType::Score) continue;
@@ -81,18 +74,7 @@ void drawFlashOverlay(Canvas& ctx, const GameData& g) {
   if (g.flashAlpha <= 0) return;
   ctx.globalAlpha(g.flashAlpha);
   ctx.fillStyle(g.flashColor);
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-  ctx.globalAlpha(1);
-}
-
-void drawDangerVignette(Canvas& ctx, const GameData& g) {
-  if (g.dangerAlpha <= 0.01f) return;
-  ctx.globalAlpha(g.dangerAlpha);
-  ctx.fillStyle(Gradient::radialGradient(CANVAS_W / 2, CANVAS_H / 2, CANVAS_H * 0.3f, CANVAS_W / 2, CANVAS_H / 2,
-                                         CANVAS_H * 0.7f)
-                    .add(0, TRANSPARENT)
-                    .add(1, C("#ff000044")));
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  ctx.tintRect(0, 0, CANVAS_W, CANVAS_H);
   ctx.globalAlpha(1);
 }
 
@@ -149,8 +131,6 @@ void drawWaveAnnounce(Canvas& ctx, const GameData& g) {
 
 void drawPausedOverlay(Canvas& ctx, const GameData& g) {
   if (g.state != GameState::Paused) return;
-  ctx.fillStyle(rgba(0, 0, 0, 0.6f));
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
   ctx.fillStyle(C("#fff"));
   ctx.font(40, Font::Bold);
   ctx.textAlign(Align::Center);
@@ -167,7 +147,7 @@ void drawSlowMotionOverlay(Canvas& ctx, const GameData& g) {
   if (g.slowMotion >= 1) return;
   ctx.globalAlpha(0.08f);
   ctx.fillStyle(C("#88aaff"));
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+  ctx.tintRect(0, 0, CANVAS_W, CANVAS_H);
   ctx.globalAlpha(1);
 }
 
@@ -220,58 +200,59 @@ void drawWeaponLabel(Canvas& ctx, WeaponId id, float x, float y) {
 }
 
 static float drawHpBar(Canvas& ctx, const Player& p, float barY, const std::string& label, Color labelColor) {
-  const float barX = CANVAS_W - 10, segW = 14, segH = 8, segGap = 3;
+  const float barX = CANVAS_W - 10, segW = 28, segH = 16, segGap = 5;
   const float totalW = p.maxHp * segW + (p.maxHp - 1) * segGap;
   for (int i = 0; i < p.maxHp; i++) {
     float sx = barX - totalW + i * (segW + segGap);
     bool filled = i < p.hp;
     ctx.fillStyle(C("#1a1a2e"));
     ctx.beginPath();
-    ctx.roundRect(sx, barY, segW, segH, 2);
+    ctx.roundRect(sx, barY, segW, segH, 4);
     ctx.fill();
     if (filled) {
       float hpR = static_cast<float>(p.hp) / p.maxHp;
       ctx.fillStyle(hpR > 0.6f ? C("#44ffaa") : hpR > 0.34f ? C("#ffaa44") : C("#ff4455"));
       ctx.beginPath();
-      ctx.roundRect(sx, barY, segW, segH, 2);
+      ctx.roundRect(sx, barY, segW, segH, 4);
       ctx.fill();
       ctx.save();
       ctx.globalAlpha(0.3f);
       ctx.fillStyle(C("#fff"));
       ctx.beginPath();
-      ctx.roundRect(sx + 1, barY, segW - 2, segH / 2, 2, 2, 0, 0);
+      ctx.roundRect(sx + 2, barY, segW - 4, segH / 2, 4, 4, 0, 0);
       ctx.fill();
       ctx.restore();
     }
     ctx.strokeStyle(filled ? C("#ffffff30") : C("#ffffff10"));
-    ctx.lineWidth(0.5f);
+    ctx.lineWidth(1);
     ctx.beginPath();
-    ctx.roundRect(sx, barY, segW, segH, 2);
+    ctx.roundRect(sx, barY, segW, segH, 4);
     ctx.stroke();
   }
   ctx.textAlign(Align::Right);
-  ctx.font(9);
+  ctx.font(16);
   ctx.fillStyle(labelColor);
-  ctx.fillText(label, barX - totalW - 5, barY + segH - 1);
+  ctx.fillText(label, barX - totalW - 8, barY + segH - 2);
   return barY + segH;
 }
 
 void drawHUD(Canvas& ctx, GameData& g) {
   const Player& p = g.player;
+  const float top = g.showFps ? 14 : 0;  // below the frame counter
   ctx.fillStyle(C("#fff"));
-  ctx.font(20, Font::Bold);
+  ctx.font(40, Font::Bold);
   ctx.textAlign(Align::Left);
-  ctx.fillText(formatThousands(g.score), 10, 30);
+  ctx.fillText(formatThousands(g.score), 10, top + 44);
   ctx.font(14);
   ctx.fillStyle(C("#aac"));
-  ctx.fillText(getWaveLabel(g), 10, 50);
+  ctx.fillText(getWaveLabel(g), 10, top + 64);
   const ChapterDef& chapter = getChapter(g.chapterId);
   ctx.font(11);
   ctx.fillStyle(chapter.hudColor);
-  ctx.fillText(chapter.name, 10, 64);
+  ctx.fillText(chapter.name, 10, top + 78);
   if (g.gameMode == GameMode::Daily && g.dailyModifier != DailyModifier::None) {
     ctx.fillStyle(C("#da8"));
-    ctx.fillText(dailyModifierLabel(g.dailyModifier), 10, 78);
+    ctx.fillText(dailyModifierLabel(g.dailyModifier), 10, top + 92);
   }
   auto seatColor = [&](const Player& s) { return resolveShipPalette(s.aircraftId, coopSeatForShip(g, s)).accent; };
   float barBottom = drawHpBar(ctx, p, 14, g.player2 ? "P1" : "HP", g.player2 ? seatColor(p) : C("#889"));
@@ -394,8 +375,6 @@ static void drawNameEntry(Canvas& ctx, const GameData& g, float top, uint32_t no
 
 void drawGameOver(Canvas& ctx, GameData& g, uint32_t nowMs) {
   auto lineStep = [](float y, float fontSize, float gap = 14) { return y + fontSize + gap; };
-  ctx.fillStyle(rgba(0, 0, 0, 0.72f));
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
   ctx.textAlign(Align::Center);
   ctx.save();
   ctx.translate(0, (CANVAS_H - BASE_H) / 2);
@@ -495,9 +474,7 @@ void drawMenu(Canvas& ctx, GameData& g, uint32_t nowMs) {
   const float controlsTop = 474 + offset;
   const float controlsStep = 15;
 
-  ctx.fillStyle(rgba(0, 0, 0, 0.35f));
-  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-  ctx.textAlign(Align::Center);
+  ctx.textAlign(Align::Center);  // the backdrop comes dimmed (renderGame)
   // the layout is the original's 700 rows, centred on a taller field
   const float yoff = (CANVAS_H - BASE_H) / 2;
   ctx.save();
@@ -516,8 +493,8 @@ void drawMenu(Canvas& ctx, GameData& g, uint32_t nowMs) {
 
   ctx.textAlign(Align::Right);
   ctx.fillStyle(C("#fd4"));
-  ctx.font(14, Font::Bold);
-  ctx.fillText("¢ " + formatThousands(loadCoins()), CANVAS_W - 12, 28 - yoff);
+  ctx.font(28, Font::Bold);
+  ctx.fillText("¢ " + formatThousands(loadCoins()), CANVAS_W - 12, 38 - yoff);
   ctx.textAlign(Align::Center);
 
   auto label = [&](const char* text, float y) {

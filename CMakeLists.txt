@@ -8,7 +8,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # GLES2 everywhere it exists; GL2 for desktop-GL-only stacks.
-set(SKYBLASTER_GL "GLES2" CACHE STRING "NanoVG backend: GLES2 or GL2")
+set(SKYBLASTER_GL "GLES2" CACHE STRING "GL flavour: GLES2 or GL2")
 set_property(CACHE SKYBLASTER_GL PROPERTY STRINGS GLES2 GL2)
 set(SKYBLASTER_DATADIR "${CMAKE_INSTALL_PREFIX}/share/sky-blaster" CACHE PATH "Installed data directory")
 
@@ -17,9 +17,11 @@ find_package(SDL3 REQUIRED CONFIG)
 add_executable(sky-blaster
   src/main.cpp
   src/canvas.cpp
+  src/renderer.cpp
+  src/prims.cpp
+  src/fontstash.c
   src/audio.cpp
   src/input.cpp
-  src/nanovg_gl.cpp
   src/game/data.cpp
   src/game/progress.cpp
   src/game/rules.cpp
@@ -32,19 +34,18 @@ add_executable(sky-blaster
   src/game/render_scene.cpp
   src/game/render_world.cpp
   src/game/render_ui.cpp
-  third_party/nanovg/nanovg.c
 )
 
 target_include_directories(sky-blaster PRIVATE
   src
-  third_party/nanovg
+  third_party/fontstash
   third_party/stb
 )
 target_compile_definitions(sky-blaster PRIVATE SKYBLASTER_DATADIR="${SKYBLASTER_DATADIR}")
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(sky-blaster PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wextra -Wno-missing-field-initializers>)
   # vendored C code is left as upstream wrote it
-  set_source_files_properties(third_party/nanovg/nanovg.c PROPERTIES COMPILE_OPTIONS "-w")
+  set_source_files_properties(src/fontstash.c PROPERTIES COMPILE_OPTIONS "-w")
 endif()
 
 if(SKYBLASTER_GL STREQUAL "GL2")

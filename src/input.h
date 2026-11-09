@@ -36,8 +36,15 @@ class Input {
   void press(GameData& g, InputState& p1, int padIndex, Button b);
   bool keyDown(GameData& g, InputState& p1, SDL_Scancode sc);
   int indexOf(SDL_JoystickID id) const;
+  void track(const GameData& g);
+  bool anyHeld() const;
 
   bool turned_;
   std::vector<Pad> pads_;
   bool keys_[SDL_SCANCODE_COUNT] = {};
+  // Game over ignores input until everything held at the death (fire,
+  // the stick) is let go: it would otherwise edit the high-score name.
+  GameState seen_ = GameState::Menu;
+  bool quiet_ = false;
+  uint64_t quietSince_ = 0;
 };
