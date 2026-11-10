@@ -7,7 +7,11 @@ original function by function; see `UPSTREAM` for the commit it was ported
 from.
 
 - **SDL3** for the window, GL context, controllers and audio
-- **NanoVG** (GLES2 or GL2) for the canvas-style vector drawing
+- its own small renderer (GLES2 or GL2) behind a canvas-style API: shapes
+  are triangulated on the CPU, gradients are vertex colours, edges get a
+  one-pixel fade for antialiasing, and a frame goes out in a few draw calls
+  with one trivial shader, so a Mali-400 keeps 60 fps at 1080p
+- **fontstash** with stb_truetype for the text
 - sounds are synthesised at run time, as in the original; there are no
   image or audio assets
 
@@ -38,7 +42,7 @@ from.
 | L2 / R2 | difficulty | R2 fires |
 | SELECT + ←→ | practice start wave | toggle invincibility (practice) |
 | A | start | fire (auto-fire is on by default) |
-| B | | bomb |
+| B | | bomb (3 per run, up to 5; the red B power-up adds one) |
 | X | | skill |
 | Y | unlock selection | toggle auto-fire |
 | START | start | pause |
@@ -52,9 +56,12 @@ cmake --build build
 ```
 
 Options: `--rotate 0|90|180|270`, `--turned`, `--windowed`, `--window WxH`, `--save-dir DIR`,
-`--data-dir DIR`, `--mute`. For testing: `--demo [--demo-wave N]
+`--data-dir DIR`, `--mute`, `--show-fps` (a frame counter in the top-left
+corner). For testing: `--demo [--demo-wave N]
 [--demo-weapon 0-4]` starts an invincible practice run, `--shot FILE.png
---shot-frame N` saves frame N and exits.
+--shot-frame N` saves frame N and exits, `--fps` logs the frame rate and
+where the time goes, `--no-vsync`, `--msaa N` (multisampling instead of the
+edge fade; it halves the frame rate on a Mali-400).
 
 Progress (coins, unlocks, achievements, high scores) is kept in
 `save.ini` in the save directory.
@@ -62,7 +69,7 @@ Progress (coins, unlocks, achievements, high scores) is kept in
 ## Licenses
 
 - Game code: MIT, see `LICENSE` (original © cosmoli, port © REG-Linux)
-- NanoVG: zlib, `third_party/nanovg/LICENSE.txt`
+- fontstash: zlib, `third_party/fontstash/LICENSE.txt`; stb_truetype: public domain / MIT
 - stb_image_write: public domain / MIT, `third_party/stb/stb_image_write.h`
 - Liberation Sans: SIL OFL 1.1, `data/fonts/LICENSE.liberation`
 - DejaVu fonts: Bitstream Vera license, `data/fonts/LICENSE.dejavu`

@@ -1,5 +1,7 @@
-// A small subset of the HTML canvas 2D API on top of NanoVG, so the
-// original drawing code ports line by line.
+// A small subset of the HTML canvas 2D API, so the original drawing code
+// ports line by line. Shapes are flattened and triangulated here, gradients
+// become vertex colours and edges get a one-pixel fading fringe, all handed
+// to a Renderer that draws a frame in a few calls (see renderer.h).
 #pragma once
 
 #include <string>
@@ -7,8 +9,10 @@
 #include <vector>
 
 #include "color.h"
+#include "renderer.h"
 
-struct NVGcontext;
+class Prims;
+struct FONScontext;
 
 enum class Font { Sans, Bold, Mono };
 enum class Align { Left, Center, Right };
@@ -29,12 +33,26 @@ struct Gradient {
 
 class Canvas {
  public:
-  explicit Canvas(NVGcontext* vg);
+  explicit Canvas(Renderer& renderer);
+  ~Canvas();
   bool loadFonts(const std::string& dir);
-  NVGcontext* nvg() const { return vg_; }
+  void setAntiAlias(bool on) { aa_ = on; }
+
+  void beginFrame(int w, int h);
+  void endFrame();
+  // What `prims` queued, here in the drawing order, with the current transform.
+  void drawPrims(Prims& prims);
+  int drawCalls() const { return drawCalls_; }  // fills, strokes and texts this frame
+
+  // Large plain layers (dimming, flashes, tints); fill colour and alpha as set.
+  void tintRect(float x, float y, float w, float h);
+  void setPrims(Prims* prims) { prims_ = prims; }
+  // darkens what follows (Renderer::dim)
+  void dim(float k);
 
   void save();
   void restore();
+  void resetTransform();
   void translate(float x, float y);
   void rotate(float a);
   void scale(float x, float y);
@@ -72,6 +90,7 @@ class Canvas {
     float v[8];
   };
   struct State {
+    float xf[6] = {1, 0, 0, 1, 0, 0};  // a b c d e f: x' = a x + c y + e, y' = b x + d y + f
     bool fillGradient = false;
     Color fill{0, 0, 0, 1};
     Gradient gradient;
@@ -85,16 +104,50 @@ class Canvas {
     Color shadowColor = TRANSPARENT;
     float shadowBlur = 0;
     float dashOn = 0, dashOff = 0;
+    bool lighter = false;
+  };
+  struct Pt {
+    float x, y;
+  };
+  struct Sub {
+    std::vector<Pt> pts;
+    bool closed = false;
+  };
+  // the colour source of one fill or stroke, in pixel space
+  struct Paint {
+    int kind = 0;  // 0 solid, 1 linear, 2 radial
+    Color solid;
+    float x0 = 0, y0 = 0, x1 = 0, y1 = 0, r0 = 0, r1 = 0;
+    std::vector<std::pair<float, Color>> stops;
+    float alpha = 1;
   };
 
-  void replay(bool dashed);
-  void fillCurrent();
+  Pt apply(float x, float y) const;
+  float pixelScale() const;
+  void flatten(std::vector<Sub>& subs, bool dashed) const;
+  Paint fillPaint() const;
+  Paint solidPaint(Color c) const;
+  float paintT(const Paint& p, Pt q) const;
+  Vtx vtx(Pt q, Color premul) const;
+  Color paintAt(const Paint& p, float t) const;  // premultiplied, alpha applied
+  void fillSubs(const std::vector<Sub>& subs, const Paint& paint);
+  void fillTriangle(Pt a, Pt b, Pt c, const Paint& paint);
+  void fillRadial(const Paint& paint);
+  void fringe(const std::vector<Pt>& ring, bool closed, const Paint& paint, float inner, float outer);
+  void strokeSubs(const std::vector<Sub>& subs, const Paint& paint, float width);
   void glowPass(bool forFill);
-  void applyFont();
+  void fillCurrent();
+  void flushRenderer();
 
-  NVGcontext* vg_;
+  Renderer& r_;
+  FONScontext* fs_ = nullptr;
+  int fontIds_[3] = {-1, -1, -1};
+  bool aa_ = true;
   std::vector<Cmd> path_;
   std::vector<State> stack_;
   State st_;
-  int fontIds_[3] = {-1, -1, -1};
+  int frameW_ = 0, frameH_ = 0;
+  int drawCalls_ = 0;
+  Prims* prims_ = nullptr;
+  std::vector<Vtx> out_;
 };

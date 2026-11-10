@@ -191,8 +191,8 @@ void applyChapterToGame(GameData& g, ChapterId id) {
   const ChapterDef& ch = getChapter(id);
   g.chapterId = id;
   const float area = CANVAS_W * CANVAS_H / (BASE_W * BASE_H);
-  g.stars.clear();
-  for (int i = 0; i < static_cast<int>(100 * area); i++)
+  g.stars.clear();  // half the original density: cheaper on weak GPUs
+  for (int i = 0; i < static_cast<int>(50 * area); i++)
     g.stars.push_back({frand() * CANVAS_W, frand() * CANVAS_H, 0.3f + frand() * 2.2f, 0.2f + frand() * 0.8f});
   g.nebulae.clear();
   for (int i = 0; i < static_cast<int>(std::round(6 * area)); i++) {
