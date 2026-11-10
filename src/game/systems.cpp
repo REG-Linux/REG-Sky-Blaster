@@ -46,7 +46,10 @@ void updateShip(GameData& g, Player& p, InputState& input, float dt) {
   }
   if (input.bomb) {
     input.bomb = false;
-    activateBomb(g, p);
+    if (p.bombs > 0) {
+      p.bombs--;
+      activateBomb(g, p);
+    }
   }
   if (input.skill) {
     input.skill = false;
@@ -154,7 +157,14 @@ void applyPowerUp(GameData& g, Player& p, const PowerUp& pw) {
       addScorePopup(g, pw.x, pw.y, "SHIELD", C("#48f"));
       break;
     case PowerUpType::Bomb:
-      activateBomb(g, p);
+      // one more in stock; with the stock full it goes off at once
+      if (p.bombs < BOMBS_MAX) {
+        p.bombs++;
+        sfx::playPowerUp();
+        addScorePopup(g, pw.x, pw.y, "+1 BOMB", C("#f44"));
+      } else {
+        activateBomb(g, p);
+      }
       break;
     case PowerUpType::Heal:
       if (p.hp < p.maxHp) {

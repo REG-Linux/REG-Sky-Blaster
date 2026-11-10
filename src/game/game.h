@@ -98,6 +98,7 @@ struct Player {
   int hp, maxHp;
   float invincibleTimer;
   int powerLevel;
+  int bombs;  // stock; the original's were unlimited
   bool shieldActive;
   float shieldTimer;
   float tilt;
@@ -122,6 +123,7 @@ struct HighScore {
 };
 
 constexpr int NAME_LEN = 8;
+constexpr int BOMBS_START = 3, BOMBS_MAX = 5;
 constexpr const char* NAME_CHARS = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
 // Typing a name for a new high score, on the game-over screen.

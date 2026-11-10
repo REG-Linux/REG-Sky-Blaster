@@ -42,7 +42,7 @@ from.
 | L2 / R2 | difficulty | R2 fires |
 | SELECT + ←→ | practice start wave | toggle invincibility (practice) |
 | A | start | fire (auto-fire is on by default) |
-| B | | bomb |
+| B | | bomb (3 per run, up to 5; the red B power-up adds one) |
 | X | | skill |
 | Y | unlock selection | toggle auto-fire |
 | START | start | pause |

@@ -236,6 +236,27 @@ static float drawHpBar(Canvas& ctx, const Player& p, float barY, const std::stri
   return barY + segH;
 }
 
+// Bomb stock under a ship's HP bar: a slot per bomb it can hold.
+static float drawBombs(Canvas& ctx, const Player& p, float y) {
+  const float r = 7, gap = 6, right = CANVAS_W - 10;
+  const float totalW = BOMBS_MAX * 2 * r + (BOMBS_MAX - 1) * gap;
+  for (int i = 0; i < BOMBS_MAX; i++) {
+    const float cx = right - totalW + r + i * (2 * r + gap), cy = y + r;
+    ctx.fillStyle(i < p.bombs ? C("#f44") : C("#1a1a2e"));
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, PI * 2);
+    ctx.fill();
+    ctx.strokeStyle(i < p.bombs ? C("#ffffff40") : C("#ffffff10"));
+    ctx.lineWidth(1);
+    ctx.stroke();
+  }
+  ctx.textAlign(Align::Right);
+  ctx.font(16);
+  ctx.fillStyle(C("#889"));
+  ctx.fillText("BOMB", right - totalW - 8, y + 2 * r - 1);
+  return y + 2 * r;
+}
+
 void drawHUD(Canvas& ctx, GameData& g) {
   const Player& p = g.player;
   const float top = g.showFps ? 14 : 0;  // below the frame counter
@@ -256,7 +277,11 @@ void drawHUD(Canvas& ctx, GameData& g) {
   }
   auto seatColor = [&](const Player& s) { return resolveShipPalette(s.aircraftId, coopSeatForShip(g, s)).accent; };
   float barBottom = drawHpBar(ctx, p, 14, g.player2 ? "P1" : "HP", g.player2 ? seatColor(p) : C("#889"));
-  if (g.player2) barBottom = drawHpBar(ctx, *g.player2, barBottom + 6, "P2", seatColor(*g.player2));
+  barBottom = drawBombs(ctx, p, barBottom + 6);
+  if (g.player2) {
+    barBottom = drawHpBar(ctx, *g.player2, barBottom + 8, "P2", seatColor(*g.player2));
+    barBottom = drawBombs(ctx, *g.player2, barBottom + 6);
+  }
   const float statusY = barBottom + 10;
   ctx.textAlign(Align::Right);
   if (p.powerLevel > 0) {

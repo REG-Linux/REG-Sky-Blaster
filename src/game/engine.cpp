@@ -19,6 +19,7 @@ Player createPlayer(AircraftId a, WeaponId w) {
   p.shootInterval = 8;
   p.hp = craft.startHp;
   p.maxHp = craft.maxHp;
+  p.bombs = BOMBS_START;
   p.aircraftId = craft.id;
   p.weaponId = w;
   return p;
