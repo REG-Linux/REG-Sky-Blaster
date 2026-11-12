@@ -1,35 +1,39 @@
 // combat.ts and skills.ts (simulation)
 #include <algorithm>
 #include <cmath>
+#include <optional>
 
 #include "game.h"
 
 namespace {
 
-void tryPowerUp(GameData& g, float x, float y) {
+// One roll per kill: 1 kill in 10 drops something (the original rolled
+// twice: 18% a power-up, 7% a weapon).
+void tryDrop(GameData& g, float x, float y) {
   if (!powerUpsEnabled(g)) return;
-  if (g.rng.next() > 0.18) return;
-  static const PowerUpType types[] = {PowerUpType::Spread, PowerUpType::Speed, PowerUpType::Shield,
-                                      PowerUpType::Bomb, PowerUpType::Heal};
-  static const double wts[] = {0.28, 0.2, 0.17, 0.15, 0.2};
+  struct Drop {
+    double chance;
+    PowerUpType type;
+    std::optional<WeaponId> weapon;
+  };
+  static const Drop drops[] = {
+      {0.008, PowerUpType::Heal, {}},
+      {0.008, PowerUpType::Bomb, {}},
+      {0.016, PowerUpType::Spread, {}},
+      {0.016, PowerUpType::Speed, {}},
+      {0.02, PowerUpType::Shield, {}},
+      {0.008, PowerUpType::Weapon, WeaponId::ArmorPiercing},
+      {0.008, PowerUpType::Weapon, WeaponId::Shotgun},
+      {0.008, PowerUpType::Weapon, WeaponId::Laser},
+      {0.008, PowerUpType::Weapon, WeaponId::Homing},
+  };
   double r = g.rng.next();
-  PowerUpType t = PowerUpType::Spread;
-  for (int i = 0; i < 5; i++) {
-    r -= wts[i];
-    if (r <= 0) {
-      t = types[i];
-      break;
-    }
+  for (const Drop& d : drops) {
+    if ((r -= d.chance) >= 0) continue;
+    if (d.weapon) g.powerUps.push_back({x, y, 22, 22, PowerUpType::Weapon, 1.4f, d.weapon});
+    else g.powerUps.push_back({x, y, 20, 20, d.type, 1.5f, {}});
+    return;
   }
-  g.powerUps.push_back({x, y, 20, 20, t, 1.5f, {}});
-}
-
-void tryWeaponDrop(GameData& g, float x, float y) {
-  if (!powerUpsEnabled(g)) return;
-  if (g.rng.next() > 0.07) return;
-  static const WeaponId alts[] = {WeaponId::ArmorPiercing, WeaponId::Shotgun, WeaponId::Laser, WeaponId::Homing};
-  WeaponId w = alts[static_cast<int>(g.rng.next() * 4)];
-  g.powerUps.push_back({x, y, 22, 22, PowerUpType::Weapon, 1.4f, w});
 }
 
 void startSkillCooldown(Player& p) { p.skillCooldown = getAircraft(p.aircraftId).skillCooldown; }
@@ -156,8 +160,9 @@ void onEnemyKilled(GameData& g, const Enemy& e, float x, float y) {
     sfx::playExplosion();
   }
   if (e.type == EnemyType::Splitter) spawnSplitterChildren(g, x, y);
-  tryPowerUp(g, x, y);
-  tryWeaponDrop(g, x, y);
+  // a boss always leaves a heal; other kills roll for a drop
+  if (boss) g.powerUps.push_back({x, y, 20, 20, PowerUpType::Heal, 1.5f, {}});
+  else tryDrop(g, x, y);
 
   awardRunCoins(g, coinRewardForEnemy(e.type), x, y - 22);
   LifetimeStats stats = recordEnemyKill(boss);
@@ -225,7 +230,7 @@ void hurtPlayer(GameData& g, Player& p) {
   if (isPracticeInvincible(g)) return;
   g.waveDamageTaken = true;
   p.hp--;
-  p.invincibleTimer = 2;
+  p.invincibleTimer = HIT_GRACE_S;
   shake(g, 10, 12);
   g.flashAlpha = 0.25f;
   g.flashColor = C("#ff2200");

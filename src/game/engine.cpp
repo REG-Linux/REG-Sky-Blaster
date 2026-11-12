@@ -145,6 +145,7 @@ void resetGame(GameData& g) {
 bool startRun(GameData& g) {
   if (!canStartGame(g)) return false;
   if (isCoopMode(g) && !g.p2Connected) return false;
+  rememberMenu(g);
   resetGame(g);
   if (isCoopMode(g)) {
     // P2 flies the same loadout; seat colours tell the ships apart
@@ -178,9 +179,8 @@ void returnToMenu(GameData& g) {
 }
 
 static std::vector<MenuRow> menuRows(const GameData& g) {
-  std::vector<MenuRow> rows = {MenuRow::Mode, MenuRow::Aircraft, MenuRow::Weapon, MenuRow::Difficulty};
+  std::vector<MenuRow> rows = {MenuRow::Start, MenuRow::Mode, MenuRow::Aircraft, MenuRow::Weapon, MenuRow::Difficulty};
   if (isPracticeMode(g)) rows.push_back(MenuRow::StartWave);
-  rows.push_back(MenuRow::Start);
   return rows;
 }
 

@@ -124,6 +124,7 @@ struct HighScore {
 
 constexpr int NAME_LEN = 8;
 constexpr int BOMBS_START = 3, BOMBS_MAX = 5;
+constexpr float HIT_GRACE_S = 3;  // invincible after a hit (2 in the original)
 constexpr const char* NAME_CHARS = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
 // Typing a name for a new high score, on the game-over screen.
@@ -216,9 +217,10 @@ struct GameData {
   int enemiesKilled = 0;
   bool autoFire = true;
   bool showFps = false;  // a frame counter takes the HUD's top line
+  float seam = -1;  // field row between two stacked panels (-1: one screen)
   bool practiceInvincible = false;
   int practiceStartWave = 1;
-  MenuRow menuRow = MenuRow::Mode;
+  MenuRow menuRow = MenuRow::Start;
   NameEntry nameEntry;
   int highScoreRank = -1;  // this run's place in the table, -1 none
 };
@@ -296,6 +298,13 @@ float frand();
 
 // ---- progress (progress.cpp) ----
 void progressInit(const std::string& saveDir);
+// while on, saves wait (kills and coins in a run); off writes what waited
+void progressDefer(bool on);
+// writes what is left and waits for it (at exit)
+void progressShutdown();
+// the title menu's choices, kept for the next start
+void rememberMenu(const GameData& g);
+void restoreMenu(GameData& g);
 int loadCoins();
 int addCoins(int amount);
 bool isAircraftUnlocked(AircraftId id);

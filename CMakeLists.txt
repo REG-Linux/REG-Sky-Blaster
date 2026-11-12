@@ -63,7 +63,8 @@ else()
   endif()
 endif()
 
-target_link_libraries(sky-blaster PRIVATE SDL3::SDL3 m)
+find_package(Threads REQUIRED)
+target_link_libraries(sky-blaster PRIVATE SDL3::SDL3 Threads::Threads m)
 
 install(TARGETS sky-blaster RUNTIME DESTINATION bin)
 install(DIRECTORY data/ DESTINATION share/sky-blaster)

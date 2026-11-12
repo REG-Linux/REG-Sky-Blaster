@@ -1,12 +1,16 @@
 // progress.ts + storage/highscores.ts. The browser's localStorage becomes
-// one key=value file in the save directory, rewritten on every change.
+// one key=value file in the save directory, rewritten in the background
+// when play stops.
 #include <algorithm>
+#include <condition_variable>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <sstream>
+#include <thread>
 
 #include "game.h"
 
@@ -25,9 +29,14 @@ struct Save {
   LifetimeStats stats;
   std::vector<HighScore> highScores;
   std::string lastName;
+  // the title menu's last choices: mode, aircraft, weapon, difficulty,
+  // practice start wave (-1: none yet)
+  int menu[5] = {-1, -1, -1, -1, -1};
 };
 
 std::string g_path;
+bool g_dirty = false;  // changed since the last write
+bool g_defer = false;  // a run is being played: write later
 Save g_save;
 
 template <size_t N>
@@ -83,6 +92,10 @@ void load() {
       hs.date = v.substr(c2 + 1, c3 == std::string::npos ? std::string::npos : c3 - c2 - 1);
       if (c3 != std::string::npos) hs.name = cleanName(v.substr(c3 + 1));
       g_save.highScores.push_back(hs);
+    } else if (k == "menu") {
+      std::istringstream in(v);
+      std::string f;
+      for (int i = 0; i < 5 && std::getline(in, f, ','); i++) g_save.menu[i] = std::atoi(f.c_str());
     } else if (k == "last_name") {
       g_save.lastName = cleanName(v);
     }
@@ -93,25 +106,67 @@ void load() {
   if (g_save.highScores.size() > 10) g_save.highScores.resize(10);
 }
 
-void store() {
-  if (g_path.empty()) return;
-  std::string tmp = g_path + ".tmp";
+// The file is written by a thread of its own: a write (a rename over the old
+// file, which ext4 flushes to the card) takes 15-20 ms on an SD card, longer
+// than a frame. The game thread only hands it the text.
+std::mutex g_mu;
+std::condition_variable g_cv;
+std::string g_pending;
+bool g_hasPending = false, g_stop = false;
+std::thread g_writer;
+
+void writeFile(const std::string& data) {
+  const std::string tmp = g_path + ".tmp";
   {
     std::ofstream out(tmp, std::ios::trunc);
-    if (!out) return;
-    out << "coins=" << g_save.coins << "\n";
-    out << "aircraft=" << joinList(AIRCRAFT_KEYS, g_save.aircraft) << "\n";
-    out << "weapons=" << joinList(WEAPON_KEYS, g_save.weapons) << "\n";
-    out << "achievements=" << joinList(ACHIEVEMENT_KEYS, g_save.achievements) << "\n";
-    out << "enemy_kills=" << g_save.stats.enemyKills << "\n";
-    out << "boss_kills=" << g_save.stats.bossKills << "\n";
-    for (const HighScore& h : g_save.highScores)
-      out << "highscore=" << h.score << "," << h.wave << "," << h.date << "," << h.name << "\n";
-    out << "last_name=" << g_save.lastName << "\n";
-    if (!out.flush()) return;
+    if (!out || !(out << data) || !out.flush()) return;
   }
   std::error_code ec;
   std::filesystem::rename(tmp, g_path, ec);
+}
+
+void writerLoop() {
+  std::unique_lock<std::mutex> lock(g_mu);
+  for (;;) {
+    g_cv.wait(lock, [] { return g_hasPending || g_stop; });
+    if (!g_hasPending) return;  // stopping, all written
+    const std::string data = std::move(g_pending);
+    g_hasPending = false;
+    lock.unlock();
+    writeFile(data);
+    lock.lock();
+  }
+}
+
+void write() {
+  g_dirty = false;
+  if (g_path.empty()) return;
+  std::ostringstream out;
+  out << "coins=" << g_save.coins << "\n";
+  out << "aircraft=" << joinList(AIRCRAFT_KEYS, g_save.aircraft) << "\n";
+  out << "weapons=" << joinList(WEAPON_KEYS, g_save.weapons) << "\n";
+  out << "achievements=" << joinList(ACHIEVEMENT_KEYS, g_save.achievements) << "\n";
+  out << "enemy_kills=" << g_save.stats.enemyKills << "\n";
+  out << "boss_kills=" << g_save.stats.bossKills << "\n";
+  for (const HighScore& h : g_save.highScores)
+    out << "highscore=" << h.score << "," << h.wave << "," << h.date << "," << h.name << "\n";
+  out << "last_name=" << g_save.lastName << "\n";
+  out << "menu=" << g_save.menu[0] << "," << g_save.menu[1] << "," << g_save.menu[2] << "," << g_save.menu[3]
+      << "," << g_save.menu[4] << "\n";
+  {
+    std::lock_guard<std::mutex> lock(g_mu);
+    g_pending = out.str();  // only the latest state matters
+    g_hasPending = true;
+  }
+  if (!g_writer.joinable()) g_writer = std::thread(writerLoop);
+  g_cv.notify_one();
+}
+
+// During a run every kill changes the save: nothing is written until play
+// stops (progressDefer(false)), so the disk stays quiet while it is busy.
+void store() {
+  g_dirty = true;
+  if (!g_defer) write();
 }
 
 bool spendCoins(int amount) {
@@ -129,6 +184,41 @@ void progressInit(const std::string& saveDir) {
   g_path = saveDir + "/save.ini";
   g_save = Save{};
   load();
+}
+
+void progressDefer(bool on) {
+  g_defer = on;
+  if (!on && g_dirty) write();
+}
+
+void progressShutdown() {
+  progressDefer(false);
+  {
+    std::lock_guard<std::mutex> lock(g_mu);
+    g_stop = true;
+  }
+  g_cv.notify_one();
+  if (g_writer.joinable()) g_writer.join();
+}
+
+void rememberMenu(const GameData& g) {
+  const int now[5] = {static_cast<int>(g.gameMode), static_cast<int>(g.selectedAircraft),
+                      static_cast<int>(g.selectedWeapon), static_cast<int>(g.difficulty), g.practiceStartWave};
+  if (std::equal(now, now + 5, g_save.menu)) return;
+  std::copy(now, now + 5, g_save.menu);
+  store();
+}
+
+void restoreMenu(GameData& g) {
+  const int* m = g_save.menu;
+  if (m[0] >= 0 && m[0] < static_cast<int>(GameMode::Count)) g.gameMode = static_cast<GameMode>(m[0]);
+  if (m[1] >= 0 && m[1] < static_cast<int>(AircraftId::Count) && g_save.aircraft[m[1]])
+    g.selectedAircraft = static_cast<AircraftId>(m[1]);
+  if (m[2] >= 0 && m[2] < static_cast<int>(WeaponId::Count) && g_save.weapons[m[2]])
+    g.selectedWeapon = static_cast<WeaponId>(m[2]);
+  if (m[3] >= 0 && m[3] < static_cast<int>(Difficulty::Count)) g.difficulty = static_cast<Difficulty>(m[3]);
+  if (m[4] >= 1 && m[4] <= 20) g.practiceStartWave = m[4];
+  g.player = createPlayer(g.selectedAircraft, g.selectedWeapon);  // as the menu does
 }
 
 int loadCoins() { return g_save.coins; }

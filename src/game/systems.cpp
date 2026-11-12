@@ -90,6 +90,9 @@ void updateGrazeFor(GameData& g, Player& p) {
 bool resolveEnemyBulletsFor(GameData& g, Player& p) {
   if (!isPlayerVulnerable(p)) return false;
   for (int bi = static_cast<int>(g.bullets.size()) - 1; bi >= 0; bi--) {
+    // a hit makes the ship invincible: the other bullets on it this frame
+    // must not take more lives (the original's did)
+    if (!isPlayerVulnerable(p)) return false;
     if (bi >= static_cast<int>(g.bullets.size())) continue;
     const Bullet& b = g.bullets[bi];
     if (b.isPlayer) continue;
@@ -118,6 +121,7 @@ bool resolveEnemyBulletsFor(GameData& g, Player& p) {
 bool resolveEnemyContactFor(GameData& g, Player& p) {
   if (!isPlayerVulnerable(p)) return false;
   for (int ei = static_cast<int>(g.enemies.size()) - 1; ei >= 0; ei--) {
+    if (!isPlayerVulnerable(p)) return false;  // one hit per frame, as with bullets
     if (ei >= static_cast<int>(g.enemies.size())) continue;
     Enemy& e = g.enemies[ei];
     if (!overlap(p.x, p.y, p.width * 0.4f, p.height * 0.4f, e.x, e.y, e.width, e.height)) continue;

@@ -6,15 +6,16 @@
 
 namespace {
 
+// unlock prices ten times the original's
 const AircraftDef AIRCRAFT[] = {
     {AircraftId::Falcon, "Falcon", "Balanced all-rounder", 6, 3, 5, AircraftSkill::MissileSalvo,
      "Missile Salvo", "Launch homing missiles at nearby enemies", 8, true, 0, C("#44ddff"),
      C("#2288cc"), C("#115577"), C("#88eeff"), C("#0088ff"), C("#0ff")},
     {AircraftId::Phantom, "Phantom", "Fast and fragile", 8, 2, 4, AircraftSkill::Dash, "Dash",
-     "Blink forward with brief invincibility", 4, false, 500, C("#cc88ff"), C("#8844cc"),
+     "Blink forward with brief invincibility", 4, false, 5000, C("#cc88ff"), C("#8844cc"),
      C("#442266"), C("#ddaaff"), C("#aa44ff"), C("#c8f")},
     {AircraftId::Fortress, "Fortress", "Heavy and slow", 4, 5, 6, AircraftSkill::EnergyShield,
-     "Energy Shield", "Absorb hits and empower your next attack", 10, false, 800, C("#ffcc44"),
+     "Energy Shield", "Absorb hits and empower your next attack", 10, false, 8000, C("#ffcc44"),
      C("#cc8822"), C("#664411"), C("#ffdd88"), C("#ff8800"), C("#fc4")},
 };
 
@@ -22,13 +23,13 @@ const WeaponDef WEAPONS[] = {
     {WeaponId::Standard, "Standard Blaster", "STD", "Reliable spread-fire blaster", C("#0ff"),
      C("#0ff"), true, 0},
     {WeaponId::ArmorPiercing, "Armor Piercing", "AP", "Rounds pierce through enemies", C("#8f8"),
-     C("#afa"), false, 300},
+     C("#afa"), false, 3000},
     {WeaponId::Shotgun, "Shotgun", "SG", "Wide burst at close range", C("#fa4"), C("#fc8"), false,
-     400},
+     4000},
     {WeaponId::Laser, "Laser", "LSR", "Continuous beam ramps damage", C("#f4f"), C("#f8f"), false,
-     600},
+     6000},
     {WeaponId::Homing, "Homing", "HMG", "Slow missiles track targets", C("#f88"), C("#f88"), false,
-     600},
+     6000},
 };
 
 const ChapterDef CHAPTERS[] = {

@@ -57,7 +57,8 @@ cmake --build build
 
 Options: `--rotate 0|90|180|270`, `--turned`, `--windowed`, `--window WxH`, `--save-dir DIR`,
 `--data-dir DIR`, `--mute`, `--show-fps` (a frame counter in the top-left
-corner). For testing: `--demo [--demo-wave N]
+corner), `--seam Y` (the window row where two stacked panels meet: menus
+keep their text off it). For testing: `--demo [--demo-wave N]
 [--demo-weapon 0-4]` starts an invincible practice run, `--shot FILE.png
 --shot-frame N` saves frame N and exits, `--fps` logs the frame rate and
 where the time goes, `--no-vsync`, `--msaa N` (multisampling instead of the

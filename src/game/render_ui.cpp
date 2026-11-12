@@ -24,6 +24,23 @@ std::string repeat(const char* s, int n) {
 
 float blink(uint32_t nowMs) { return 0.5f + std::sin(static_cast<float>(nowMs) * 0.004f) * 0.5f; }
 
+// Keeps text off the seam between two stacked panels (a dual-screen device
+// spanning both): a block that would cross it starts just below it, and
+// what follows moves down as much.
+struct Flow {
+  float seam;  // in the layout's rows; negative: one screen
+  float shift = 0;
+  Flow(const GameData& g, float yoff) : seam(g.seam < 0 ? -1 : g.seam - yoff) {}
+  float at(float top, float h) const { return seam >= 0 && top < seam && top + h > seam ? seam + 6 : top; }
+  // a block of a fixed layout, moved by what moved before it
+  float place(float top, float h) {
+    const float t = at(top + shift, h);
+    shift = t - top;
+    return t;
+  }
+  float text(float baseline, float px) { return place(baseline - px, px * 1.3f) + px; }
+};
+
 // "1. CJOM        12,345  W7  11/9/2026"; the title screen's leaves the date out.
 std::string scoreLine(int i, const HighScore& s, bool date = true) {
   char buf[128];
@@ -110,7 +127,9 @@ void drawWaveAnnounce(Canvas& ctx, const GameData& g) {
   WaveAnnounce announce = getWaveAnnounce(g);
   ctx.save();
   ctx.globalAlpha(a);
-  ctx.translate(CANVAS_W / 2, CANVAS_H / 2 - 30);
+  // the main line and the sub line under it, one block off the seam
+  Flow flow(g, 0);
+  ctx.translate(CANVAS_W / 2, flow.place(CANVAS_H / 2 - 30 - 32, 62) + 32);
   ctx.scale(1 + (1 - a) * 0.3f);
   ctx.font(32, Font::Bold);
   ctx.textAlign(Align::Center);
@@ -134,13 +153,14 @@ void drawPausedOverlay(Canvas& ctx, const GameData& g) {
   ctx.fillStyle(C("#fff"));
   ctx.font(40, Font::Bold);
   ctx.textAlign(Align::Center);
-  ctx.fillText("PAUSED", CANVAS_W / 2, CANVAS_H / 2 - 20);
+  Flow flow(g, 0);
+  ctx.fillText("PAUSED", CANVAS_W / 2, flow.text(CANVAS_H / 2 - 20, 40));
   ctx.font(18);
   ctx.fillStyle(C("#aac"));
-  ctx.fillText("Press START to resume", CANVAS_W / 2, CANVAS_H / 2 + 20);
+  ctx.fillText("Press START to resume", CANVAS_W / 2, flow.text(CANVAS_H / 2 + 20, 18));
   ctx.font(14);
   ctx.fillStyle(C("#889"));
-  ctx.fillText("SELECT \xE2\x80\x94 quit to title", CANVAS_W / 2, CANVAS_H / 2 + 46);
+  ctx.fillText("SELECT \xE2\x80\x94 quit to title", CANVAS_W / 2, flow.text(CANVAS_H / 2 + 46, 14));
 }
 
 void drawSlowMotionOverlay(Canvas& ctx, const GameData& g) {
@@ -352,21 +372,22 @@ void drawAchievementToast(Canvas& ctx, const GameData& g) {
 
 // The name for a top-10 score: eight letter boxes, the cursor's pulsing,
 // with ▲ ▼ over and under it for the letter change.
-static void drawNameEntry(Canvas& ctx, const GameData& g, float top, uint32_t nowMs) {
+static void drawNameEntry(Canvas& ctx, const GameData& g, Flow& flow, float top, uint32_t nowMs) {
   const NameEntry& n = g.nameEntry;
   int place = 1;
   for (const HighScore& h : loadHighScores()) place += h.score >= g.score;
   ctx.textAlign(Align::Center);
   ctx.fillStyle(C("#fd4"));
   ctx.font(15, Font::Bold);
-  ctx.fillText(place == 1 ? "★ NEW HIGH SCORE! ★" : "TOP 10 \xE2\x80\x94 #" + std::to_string(place), CANVAS_W / 2, top);
+  ctx.fillText(place == 1 ? "★ NEW HIGH SCORE! ★" : "TOP 10 \xE2\x80\x94 #" + std::to_string(place), CANVAS_W / 2,
+               flow.text(top, 15));
   ctx.fillStyle(C("#fff"));
   ctx.font(13, Font::Bold);
-  ctx.fillText("ENTER YOUR NAME", CANVAS_W / 2, top + 22);
+  ctx.fillText("ENTER YOUR NAME", CANVAS_W / 2, flow.text(top + 22, 13));
 
   const float cw = 28, ch = 36, gap = 6;
   const float x0 = CANVAS_W / 2 - (NAME_LEN * cw + (NAME_LEN - 1) * gap) / 2;
-  const float y0 = top + 48;
+  const float y0 = flow.place(top + 48 - 16, ch + 30) + 16;  // the boxes with their ▲ ▼
   const float pulse = 0.5f + std::sin(static_cast<float>(nowMs) * 0.008f) * 0.5f;
   for (int i = 0; i < NAME_LEN; i++) {
     const float x = x0 + i * (cw + gap);
@@ -395,7 +416,7 @@ static void drawNameEntry(Canvas& ctx, const GameData& g, float top, uint32_t no
   }
   ctx.fillStyle(C("#889"));
   ctx.font(11);
-  ctx.fillText("↑ ↓ letter  ·  ← → move  ·  B delete  ·  A save", CANVAS_W / 2, y0 + ch + 34);
+  ctx.fillText("↑ ↓ letter  ·  ← → move  ·  B delete  ·  A save", CANVAS_W / 2, flow.text(y0 - flow.shift + ch + 34, 11));
 }
 
 void drawGameOver(Canvas& ctx, GameData& g, uint32_t nowMs) {
@@ -403,28 +424,29 @@ void drawGameOver(Canvas& ctx, GameData& g, uint32_t nowMs) {
   ctx.textAlign(Align::Center);
   ctx.save();
   ctx.translate(0, (CANVAS_H - BASE_H) / 2);
+  Flow flow(g, (CANVAS_H - BASE_H) / 2);
 
   ctx.save();
   if (g.modeVictory) {
     ctx.shadow(C("#4f8"), 25);
     ctx.fillStyle(C("#4f8"));
     ctx.font(40, Font::Bold);
-    ctx.fillText("MISSION COMPLETE", CANVAS_W / 2, 195);
+    ctx.fillText("MISSION COMPLETE", CANVAS_W / 2, flow.text(195, 40));
     ctx.restore();
     ctx.fillStyle(C("#aac"));
     ctx.font(14);
-    ctx.fillText("All four chapters cleared", CANVAS_W / 2, 230);
+    ctx.fillText("All four chapters cleared", CANVAS_W / 2, flow.text(230, 14));
   } else {
     ctx.shadow(C("#f44"), 25);
     ctx.fillStyle(C("#f44"));
     ctx.font(44, Font::Bold);
-    ctx.fillText("GAME OVER", CANVAS_W / 2, 195);
+    ctx.fillText("GAME OVER", CANVAS_W / 2, flow.text(195, 44));
     ctx.restore();
   }
 
   ctx.fillStyle(C("#fff"));
   ctx.font(24);
-  ctx.fillText("Score: " + formatThousands(g.score), CANVAS_W / 2, g.modeVictory ? 270 : 255);
+  ctx.fillText("Score: " + formatThousands(g.score), CANVAS_W / 2, flow.text(g.modeVictory ? 270 : 255, 24));
 
   ctx.fillStyle(C("#aac"));
   ctx.font(14);
@@ -432,7 +454,7 @@ void drawGameOver(Canvas& ctx, GameData& g, uint32_t nowMs) {
   float progressY = g.modeVictory ? 300 : 285;
   ctx.fillText(progress + "  ·  Combo " + std::to_string(g.maxCombo) + "x  ·  Graze " +
                    std::to_string(g.player.grazeCount),
-               CANVAS_W / 2, progressY);
+               CANVAS_W / 2, flow.text(progressY, 14));
 
   ctx.fillStyle(C("#889"));
   ctx.font(13);
@@ -440,7 +462,7 @@ void drawGameOver(Canvas& ctx, GameData& g, uint32_t nowMs) {
   ctx.fillText("Accuracy " + formatAccuracy(g.shotsHit, g.shotsFired) + "  ·  Damage " +
                    formatThousands(static_cast<int64_t>(std::round(g.damageDealt))) + "  ·  Kills " +
                    std::to_string(g.enemiesKilled),
-               CANVAS_W / 2, y);
+               CANVAS_W / 2, flow.text(y, 13));
   y = lineStep(y, 13, 15);
   const auto& sc = loadHighScores();
   const bool entering = g.nameEntry.active;
@@ -449,29 +471,29 @@ void drawGameOver(Canvas& ctx, GameData& g, uint32_t nowMs) {
   if (g.runCoinsEarned > 0) {
     ctx.fillStyle(C("#fd4"));
     ctx.font(15, Font::Bold);
-    ctx.fillText("+" + formatThousands(g.runCoinsEarned) + " coins earned", CANVAS_W / 2, y);
+    ctx.fillText("+" + formatThousands(g.runCoinsEarned) + " coins earned", CANVAS_W / 2, flow.text(y, 15));
     y = lineStep(y, 15);
   }
   if (isNewHighScore) {
     ctx.fillStyle(C("#fd4"));
     ctx.font(18, Font::Bold);
-    ctx.fillText("★ NEW HIGH SCORE! ★", CANVAS_W / 2, y);
+    ctx.fillText("★ NEW HIGH SCORE! ★", CANVAS_W / 2, flow.text(y, 18));
     y = lineStep(y, 18);
   }
 
   float top = std::fmax(y + 18, 372);
   if (entering) {
-    drawNameEntry(ctx, g, top, nowMs);
+    drawNameEntry(ctx, g, flow, top, nowMs);
   } else {
     ctx.fillStyle(C("#fd4"));
     ctx.font(15, Font::Bold);
-    ctx.fillText("HIGH SCORES", CANVAS_W / 2, top);
+    ctx.fillText("HIGH SCORES", CANVAS_W / 2, flow.text(top, 15));
     ctx.font(12, Font::Mono);
     // five rows, slid down if this run placed below fifth
     const int first = g.highScoreRank > 4 ? g.highScoreRank - 4 : 0;
     for (int i = first; i < static_cast<int>(sc.size()) && i < first + 5; i++) {
       ctx.fillStyle(i == g.highScoreRank ? C("#fd4") : C("#aac"));
-      ctx.fillText(scoreLine(i, sc[i]), CANVAS_W / 2, top + 22 + (i - first) * 20);
+      ctx.fillText(scoreLine(i, sc[i]), CANVAS_W / 2, flow.text(top + 22 + (i - first) * 20, 12));
     }
   }
   if (entering) {
@@ -482,58 +504,77 @@ void drawGameOver(Canvas& ctx, GameData& g, uint32_t nowMs) {
   ctx.globalAlpha(blink(nowMs));
   ctx.fillStyle(C("#fff"));
   ctx.font(20);
-  ctx.fillText("PRESS A or START to restart", CANVAS_W / 2, 540);
+  ctx.fillText("PRESS A or START to restart", CANVAS_W / 2, flow.text(540, 20));
   ctx.globalAlpha(1);
   ctx.fillStyle(C("#889"));
   ctx.font(13);
-  ctx.fillText("B \xE2\x80\x94 back to title", CANVAS_W / 2, 566);
+  ctx.fillText("B \xE2\x80\x94 back to title", CANVAS_W / 2, flow.text(566, 13));
   ctx.restore();
 }
 
 void drawMenu(Canvas& ctx, GameData& g, uint32_t nowMs) {
-  // menu-layout.ts rows; practice and co-op add one row each
   const bool showPractice = isPracticeMode(g);
   const bool showCoop = isCoopMode(g);
-  const float offset = showPractice || showCoop ? 52 : 0;  // 46 in the original; room for the cursor box
-  const float startY = 452 + offset;
-  const float controlsTop = 474 + offset;
-  const float controlsStep = 15;
 
   ctx.textAlign(Align::Center);  // the backdrop comes dimmed (renderGame)
   // the layout is the original's 700 rows, centred on a taller field
   const float yoff = (CANVAS_H - BASE_H) / 2;
   ctx.save();
   ctx.translate(0, yoff);
-
-  ctx.save();
-  ctx.shadow(C("#0af"), 40);
-  ctx.fillStyle(C("#fff"));
-  ctx.font(42, Font::Bold);
-  ctx.fillText("SKY BLASTER", CANVAS_W / 2, 130);
-  ctx.restore();
-
-  ctx.fillStyle(C("#6bf"));
-  ctx.font(14);
-  ctx.fillText("SPACE SHOOTER", CANVAS_W / 2, 156);
+  // Blocks flow down from the title; one that would cross the seam between
+  // two panels starts below it instead, and what does not fit is left out.
+  Flow flow(g, yoff);
+  float y = 0;
+  // A landscape field with one screen: the options on the left, the help
+  // and the high scores on the right, all 1.4 times larger (the columns
+  // leave the lower part of the screen empty otherwise)
+  const bool twoCols = flow.seam < 0 && CANVAS_W >= 760;
+  const float k = twoCols ? 1.4f : 1;
+  const float W = CANVAS_W / k;                 // the field's width, in menu units
+  const float bottom = (BASE_H + yoff) / k;     // its last row
+  const float colW = twoCols ? W / 2 : W;
+  const float lx = colW / 2, rx = twoCols ? W - colW / 2 : W / 2;
+  const float boxW = colW - (twoCols ? 36 : 48);
+  auto block = [&](float h, float gap) {
+    y = flow.at(y + gap, h);
+    return y + h <= bottom ? y : -1;
+  };
+  auto next = [&](float h) { y += h; };
 
   ctx.textAlign(Align::Right);
   ctx.fillStyle(C("#fd4"));
   ctx.font(28, Font::Bold);
   ctx.fillText("¢ " + formatThousands(loadCoins()), CANVAS_W - 12, 38 - yoff);
   ctx.textAlign(Align::Center);
+  ctx.save();
+  ctx.scale(k);
 
-  auto label = [&](const char* text, float y) {
+  if (float t = block(72, 42); t >= 0) {
+    ctx.save();
+    ctx.shadow(C("#0af"), 40);
+    ctx.fillStyle(C("#fff"));
+    ctx.font(42, Font::Bold);
+    ctx.fillText("SKY BLASTER", W / 2, t + 42);
+    ctx.restore();
+    ctx.fillStyle(C("#6bf"));
+    ctx.font(14);
+    ctx.fillText("SPACE SHOOTER", W / 2, t + 64);
+  }
+  next(72);
+  const float colTop = y;
+
+  auto label = [&](const char* text, float ly) {
     ctx.fillStyle(C("#fd4"));
     ctx.font(13, Font::Bold);
-    ctx.fillText(text, CANVAS_W / 2, y);
+    ctx.fillText(text, lx, ly);
   };
   // the cursor's row: a pulsing box behind it
   const float pulse = 0.5f + std::sin(static_cast<float>(nowMs) * 0.006f) * 0.5f;
-  auto focusBox = [&](MenuRow row, float top, float bottom) {
+  auto focusBox = [&](MenuRow row, float top, float h) {
     if (g.menuRow != row) return;
     ctx.save();
     ctx.beginPath();
-    ctx.roundRect(24, top, CANVAS_W - 48, bottom - top, 8);
+    ctx.roundRect(24, top, boxW, h, 8);
     ctx.fillStyle(rgba(68, 170, 255, 0.10f + 0.06f * pulse));
     ctx.fill();
     ctx.globalAlpha(0.55f + 0.45f * pulse);
@@ -544,90 +585,16 @@ void drawMenu(Canvas& ctx, GameData& g, uint32_t nowMs) {
   };
   // a row's value: on the cursor's row it is a little larger and gets the
   // ◀ ▶ that left/right act on
-  auto value = [&](MenuRow row, const std::string& text, float y, float px, Color color) {
+  auto value = [&](MenuRow row, const std::string& text, float vy, float px, Color color) {
     const bool focused = g.menuRow == row;
     ctx.save();
     ctx.fillStyle(color);
     ctx.font(px, Font::Bold);
-    ctx.translate(CANVAS_W / 2, y);
+    ctx.translate(lx, vy);
     if (focused) ctx.scale(1.08f);
     ctx.fillText(focused ? "◀  " + text + "  ▶" : text, 0, 0);
     ctx.restore();
   };
-
-  const ModeInfo& mode = modeInfo(g.gameMode);
-  focusBox(MenuRow::Mode, 166, g.gameMode == GameMode::Daily ? 243 : 229);
-  label("SELECT MODE", 182);
-  value(MenuRow::Mode, upper(mode.name), 206, 20, C("#8df"));
-  ctx.fillStyle(C("#889"));
-  ctx.font(11);
-  ctx.fillText(mode.tagline, CANVAS_W / 2, 222);
-  if (g.gameMode == GameMode::Daily) {
-    ctx.fillStyle(C("#da8"));
-    ctx.fillText(std::string("Today: ") + dailyModifierLabel(pickDailyModifier(getDailySeed())), CANVAS_W / 2, 236);
-  }
-
-  const AircraftDef& craft = getAircraft(g.selectedAircraft);
-  const WeaponDef& weapon = getWeapon(g.selectedWeapon);
-  const bool craftUnlocked = isAircraftUnlocked(g.selectedAircraft);
-  const bool weaponUnlocked = isWeaponUnlocked(g.selectedWeapon);
-  focusBox(MenuRow::Aircraft, 246, 322);
-  label("SELECT AIRCRAFT", 262);
-  value(MenuRow::Aircraft, upper(craft.name) + (craftUnlocked ? "" : "  [LOCKED]"), 286, 20,
-        craftUnlocked ? craft.hullTop : C("#888"));
-  ctx.fillStyle(C("#aac"));
-  ctx.font(11);
-  ctx.fillText(craft.tagline, CANVAS_W / 2, 302);
-  ctx.font(10);
-  if (!craftUnlocked) {
-    ctx.fillStyle(canAffordUnlock(craft.coinCost) ? C("#8f8") : C("#f88"));
-    ctx.fillText(std::to_string(craft.coinCost) + " coins \xE2\x80\x94 press Y to unlock", CANVAS_W / 2, 316);
-  } else {
-    ctx.fillStyle(C("#889"));
-    char buf[128];
-    std::snprintf(buf, sizeof buf, "SPD %g  ·  HP %d/%d  ·  %s", craft.speed, craft.startHp, craft.maxHp,
-                  craft.skillName);
-    ctx.fillText(buf, CANVAS_W / 2, 316);
-  }
-
-  focusBox(MenuRow::Weapon, 325, 382);
-  label("SELECT WEAPON", 340);
-  value(MenuRow::Weapon, upper(weapon.name) + (weaponUnlocked ? "" : "  [LOCKED]"), 362, 18,
-        weaponUnlocked ? weapon.hudColor : C("#888"));
-  ctx.font(10);
-  if (!weaponUnlocked) {
-    ctx.fillStyle(canAffordUnlock(weapon.coinCost) ? C("#8f8") : C("#f88"));
-    ctx.fillText(std::to_string(weapon.coinCost) + " coins \xE2\x80\x94 press Y to unlock", CANVAS_W / 2, 376);
-  } else {
-    ctx.fillStyle(C("#889"));
-    ctx.fillText(weapon.tagline, CANVAS_W / 2, 376);
-  }
-
-  const DifficultyInfo& diff = difficultyInfo(g.difficulty);
-  focusBox(MenuRow::Difficulty, 381, 434);
-  label("DIFFICULTY", 394);
-  value(MenuRow::Difficulty, upper(diff.name), 414, 18, diff.color);
-  ctx.fillStyle(C("#889"));
-  ctx.font(10);
-  ctx.fillText(diff.tagline, CANVAS_W / 2, 428);
-
-  if (showPractice) {
-    focusBox(MenuRow::StartWave, 433, 486);
-    label("START WAVE", 446);
-    value(MenuRow::StartWave, "WAVE " + std::to_string(g.practiceStartWave), 466, 18, C("#8df"));
-    ctx.fillStyle(C("#889"));
-    ctx.font(10);
-    ctx.fillText(practiceStartWaveLabel(g.practiceStartWave), CANVAS_W / 2, 480);
-  }
-  if (showCoop) {
-    label("PLAYER 2", 446);
-    ctx.fillStyle(g.p2Connected ? C("#8df") : C("#f88"));
-    ctx.font(15, Font::Bold);
-    ctx.fillText(g.p2Connected ? "SECOND CONTROLLER READY" : "CONNECT A SECOND CONTROLLER", CANVAS_W / 2, 466);
-    ctx.fillStyle(C("#889"));
-    ctx.font(10);
-    ctx.fillText("Both ships fly the selected loadout", CANVAS_W / 2, 480);
-  }
 
   bool startReady = canStartGame(g);
   std::string startText = startReady ? "PRESS A or START" : "UNLOCK SELECTION TO START";
@@ -635,12 +602,107 @@ void drawMenu(Canvas& ctx, GameData& g, uint32_t nowMs) {
     startReady = false;
     startText = "WAITING FOR PLAYER 2…";
   }
-  focusBox(MenuRow::Start, startY - 21, startY + 8);
-  ctx.globalAlpha(startReady ? blink(nowMs) : 0.7f);
-  ctx.fillStyle(startReady ? C("#fff") : C("#f88"));
-  ctx.font(startReady ? 20 : 16);
-  ctx.fillText(startText, CANVAS_W / 2, startY);
-  ctx.globalAlpha(1);
+  if (float t = block(30, 10); t >= 0) {
+    focusBox(MenuRow::Start, t, 30);
+    ctx.globalAlpha(startReady ? blink(nowMs) : 0.7f);
+    ctx.fillStyle(startReady ? C("#fff") : C("#f88"));
+    ctx.font(startReady ? 20 : 16);
+    ctx.fillText(startText, lx, t + 22);
+    ctx.globalAlpha(1);
+  }
+  next(30);
+
+  const ModeInfo& mode = modeInfo(g.gameMode);
+  const float modeH = g.gameMode == GameMode::Daily ? 77 : 63;
+  if (float t = block(modeH, 8); t >= 0) {
+    focusBox(MenuRow::Mode, t, modeH);
+    label("SELECT MODE", t + 16);
+    value(MenuRow::Mode, upper(mode.name), t + 40, 20, C("#8df"));
+    ctx.fillStyle(C("#889"));
+    ctx.font(11);
+    ctx.fillText(mode.tagline, lx, t + 56);
+    if (g.gameMode == GameMode::Daily) {
+      ctx.fillStyle(C("#da8"));
+      ctx.fillText(std::string("Today: ") + dailyModifierLabel(pickDailyModifier(getDailySeed())), lx,
+                   t + 70);
+    }
+  }
+  next(modeH);
+
+  const AircraftDef& craft = getAircraft(g.selectedAircraft);
+  const WeaponDef& weapon = getWeapon(g.selectedWeapon);
+  const bool craftUnlocked = isAircraftUnlocked(g.selectedAircraft);
+  const bool weaponUnlocked = isWeaponUnlocked(g.selectedWeapon);
+  if (float t = block(76, 6); t >= 0) {
+    focusBox(MenuRow::Aircraft, t, 76);
+    label("SELECT AIRCRAFT", t + 16);
+    value(MenuRow::Aircraft, upper(craft.name) + (craftUnlocked ? "" : "  [LOCKED]"), t + 40, 20,
+          craftUnlocked ? craft.hullTop : C("#888"));
+    ctx.fillStyle(C("#aac"));
+    ctx.font(11);
+    ctx.fillText(craft.tagline, lx, t + 56);
+    ctx.font(10);
+    if (!craftUnlocked) {
+      ctx.fillStyle(canAffordUnlock(craft.coinCost) ? C("#8f8") : C("#f88"));
+      ctx.fillText(std::to_string(craft.coinCost) + " coins \xE2\x80\x94 press Y to unlock", lx, t + 70);
+    } else {
+      ctx.fillStyle(C("#889"));
+      char buf[128];
+      std::snprintf(buf, sizeof buf, "SPD %g  ·  HP %d/%d  ·  %s", craft.speed, craft.startHp, craft.maxHp,
+                    craft.skillName);
+      ctx.fillText(buf, lx, t + 70);
+    }
+  }
+  next(76);
+
+  if (float t = block(57, 6); t >= 0) {
+    focusBox(MenuRow::Weapon, t, 57);
+    label("SELECT WEAPON", t + 15);
+    value(MenuRow::Weapon, upper(weapon.name) + (weaponUnlocked ? "" : "  [LOCKED]"), t + 37, 18,
+          weaponUnlocked ? weapon.hudColor : C("#888"));
+    ctx.font(10);
+    if (!weaponUnlocked) {
+      ctx.fillStyle(canAffordUnlock(weapon.coinCost) ? C("#8f8") : C("#f88"));
+      ctx.fillText(std::to_string(weapon.coinCost) + " coins \xE2\x80\x94 press Y to unlock", lx, t + 51);
+    } else {
+      ctx.fillStyle(C("#889"));
+      ctx.fillText(weapon.tagline, lx, t + 51);
+    }
+  }
+  next(57);
+
+  const DifficultyInfo& diff = difficultyInfo(g.difficulty);
+  if (float t = block(53, 6); t >= 0) {
+    focusBox(MenuRow::Difficulty, t, 53);
+    label("DIFFICULTY", t + 13);
+    value(MenuRow::Difficulty, upper(diff.name), t + 33, 18, diff.color);
+    ctx.fillStyle(C("#889"));
+    ctx.font(10);
+    ctx.fillText(diff.tagline, lx, t + 47);
+  }
+  next(53);
+
+  if (showPractice || showCoop) {
+    if (float t = block(53, 6); t >= 0) {
+      if (showPractice) {
+        focusBox(MenuRow::StartWave, t, 53);
+        label("START WAVE", t + 13);
+        value(MenuRow::StartWave, "WAVE " + std::to_string(g.practiceStartWave), t + 33, 18, C("#8df"));
+        ctx.fillStyle(C("#889"));
+        ctx.font(10);
+        ctx.fillText(practiceStartWaveLabel(g.practiceStartWave), lx, t + 47);
+      } else {
+        label("PLAYER 2", t + 13);
+        ctx.fillStyle(g.p2Connected ? C("#8df") : C("#f88"));
+        ctx.font(15, Font::Bold);
+        ctx.fillText(g.p2Connected ? "SECOND CONTROLLER READY" : "CONNECT A SECOND CONTROLLER", lx, t + 33);
+        ctx.fillStyle(C("#889"));
+        ctx.font(10);
+        ctx.fillText("Both ships fly the selected loadout", lx, t + 47);
+      }
+    }
+    next(53);
+  }
 
   static const char* lines[][2] = {
       {"↑ / ↓", "Select an option"},
@@ -652,37 +714,54 @@ void drawMenu(Canvas& ctx, GameData& g, uint32_t nowMs) {
       {"START", "Pause"},
       {"SELECT", "Invincibility (practice)"},
   };
-  const int nLines = 8;
-  for (int i = 0; i < nLines; i++) {
-    float ly = controlsTop + i * controlsStep;
-    ctx.fillStyle(C("#aac"));
-    ctx.font(11);
-    ctx.textAlign(Align::Right);
-    ctx.fillText(lines[i][0], CANVAS_W / 2 - 8, ly);
-    ctx.fillStyle(C("#88a"));
-    ctx.textAlign(Align::Left);
-    ctx.fillText(lines[i][1], CANVAS_W / 2 + 8, ly);
+  // the help and the scores: larger in the right column, which is centred
+  // on the options beside it
+  const float hFont = twoCols ? 15 : 11, hStep = twoCols ? 20 : 14, hx = twoCols ? rx - 30 : rx;
+  const float headFont = twoCols ? 18 : 13, headH = twoCols ? 26 : 20;
+  const float sFont = twoCols ? 13 : 10, sStep = twoCols ? 19 : 15;
+  const auto& sc = loadHighScores();
+  const size_t nScores = std::min(sc.size(), static_cast<size_t>(twoCols ? 10 : 3));
+  if (twoCols) {
+    const float h = 12 + 8 * hStep + (nScores > 0 ? 10 + headH + nScores * sStep : 0);
+    y = colTop + std::max(0.0f, (y - colTop - h) / 2);
+  }
+  for (int i = 0; i < 8; i++) {
+    if (float t = block(hStep, i == 0 ? 12 : 0); t >= 0) {
+      ctx.fillStyle(C("#aac"));
+      ctx.font(hFont);
+      ctx.textAlign(Align::Right);
+      ctx.fillText(lines[i][0], hx - 8, t + hStep * 0.78f);
+      ctx.fillStyle(C("#88a"));
+      ctx.textAlign(Align::Left);
+      ctx.fillText(lines[i][1], hx + 8, t + hStep * 0.78f);
+    }
+    next(hStep);
   }
   ctx.textAlign(Align::Center);
 
-  const auto& sc = loadHighScores();
-  if (!sc.empty()) {
-    float scoresTop = controlsTop + nLines * controlsStep + 18;
-    ctx.strokeStyle(C("#ffffff22"));
-    ctx.lineWidth(1);
-    ctx.beginPath();
-    ctx.moveTo(40, scoresTop - 10);
-    ctx.lineTo(CANVAS_W - 40, scoresTop - 10);
-    ctx.stroke();
-    ctx.textAlign(Align::Center);
-    ctx.fillStyle(C("#fd4"));
-    ctx.font(13, Font::Bold);
-    ctx.fillText("HIGH SCORES", CANVAS_W / 2, scoresTop);
-    ctx.font(10, Font::Mono);
-    for (size_t i = 0; i < sc.size() && i < 3; i++) {
-      ctx.fillStyle(i == 0 ? C("#fd4") : C("#aac"));
-      ctx.fillText(scoreLine(static_cast<int>(i), sc[i], false), CANVAS_W / 2, scoresTop + 16 + i * 15);
+  // the top three (ten beside the options), as many as fit
+  if (nScores > 0) {
+    if (float t = block(headH, 10); t >= 0) {
+      ctx.strokeStyle(C("#ffffff22"));
+      ctx.lineWidth(1);
+      ctx.beginPath();
+      ctx.moveTo(rx - colW / 2 + 40, t + 1);
+      ctx.lineTo(rx + colW / 2 - 40, t + 1);
+      ctx.stroke();
+      ctx.fillStyle(C("#fd4"));
+      ctx.font(headFont, Font::Bold);
+      ctx.fillText("HIGH SCORES", rx, t + headH * 0.8f);
+      next(headH);
+      ctx.font(sFont, Font::Mono);
+      for (size_t i = 0; i < nScores; i++) {
+        const float r = block(sStep, 0);
+        if (r < 0) break;
+        ctx.fillStyle(i == 0 ? C("#fd4") : C("#aac"));
+        ctx.fillText(scoreLine(static_cast<int>(i), sc[i], false), rx, r + sStep * 0.73f);
+        next(sStep);
+      }
     }
   }
+  ctx.restore();
   ctx.restore();
 }

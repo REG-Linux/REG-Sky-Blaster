@@ -34,6 +34,7 @@ struct Options {
   bool mute = false;
   bool fps = false;      // log frame rate and time spent per frame
   bool showFps = false;  // frame counter on screen
+  int seam = 0;  // window row between two stacked panels (0: one screen)
   bool vsync = true;
   int msaa = 0;  // multisample anti-aliasing samples (0: the renderer's own edge fade)
   bool demo = false;   // start a run at once (testing): Practice, invincible
@@ -47,7 +48,7 @@ struct Options {
 void usage() {
   SDL_Log(
       "usage: sky-blaster [--rotate 0|90|180|270] [--turned] [--windowed] [--window WxH] [--save-dir DIR]\n"
-      "                   [--data-dir DIR] [--mute] [--show-fps] [--shot FILE.png] [--shot-frame N]\n"
+      "                   [--data-dir DIR] [--mute] [--show-fps] [--seam Y] [--shot FILE.png] [--shot-frame N]\n"
       "                   [--demo] [--demo-wave N] [--demo-weapon 0-4] [--demo-mortal]");
 }
 
@@ -70,6 +71,10 @@ bool parse(int argc, char** argv, Options& o) {
     else if (a == "--mute") o.mute = true;
     else if (a == "--fps") o.fps = true;
     else if (a == "--show-fps") o.showFps = true;
+    else if (a == "--seam") {
+      const char* v = value();
+      if (!v || (o.seam = std::atoi(v)) < 0) return false;
+    }
     else if (a == "--no-vsync") o.vsync = false;
     else if (a == "--msaa") {
       const char* v = value();
@@ -255,6 +260,7 @@ int main(int argc, char** argv) {
   fieldArea(win, opt.rotate, aw, ah);
   setFieldSize(aw, ah);
   GameData game = createGameData();
+  restoreMenu(game);  // the choices of the last session
   InputState p1;
   Input input(opt.turned);
   if (opt.demo) {
@@ -285,6 +291,10 @@ int main(int argc, char** argv) {
     input.poll(game, p1);
     fieldArea(win, opt.rotate, aw, ah);
     if (setFieldSize(aw, ah)) refit(game);
+    // the field fills the window, upright when there are two panels
+    game.seam = opt.seam > 0 && opt.rotate == 0 && ah > 0 ? opt.seam * CANVAS_H / ah : -1;
+    // progress is written when play stops (pause, game over, the title)
+    progressDefer(game.state == GameState::Playing);
 
     uint64_t now = SDL_GetTicksNS();
     double elapsed = std::fmin((now - last) / 1e9, MAX_FRAME_DELTA_S);
@@ -350,6 +360,8 @@ int main(int argc, char** argv) {
   }
 
   nameEntryConfirm(game);  // quitting mid-entry still keeps the score
+  rememberMenu(game);      // the menu's choices, even without a run
+  progressShutdown();      // and quitting mid-run its kills and coins
   audio::shutdown();
   SDL_GL_DestroyContext(gl);
   SDL_DestroyWindow(win);
