@@ -381,9 +381,9 @@ static void drawNameEntry(Canvas& ctx, const GameData& g, Flow& flow, float top,
   ctx.font(15, Font::Bold);
   ctx.fillText(place == 1 ? "★ NEW HIGH SCORE! ★" : "TOP 10 \xE2\x80\x94 #" + std::to_string(place), CANVAS_W / 2,
                flow.text(top, 15));
-  ctx.fillStyle(C("#fff"));
+  ctx.fillStyle(n.confirming ? C("#fd4") : C("#fff"));
   ctx.font(13, Font::Bold);
-  ctx.fillText("ENTER YOUR NAME", CANVAS_W / 2, flow.text(top + 22, 13));
+  ctx.fillText(n.confirming ? "SAVE THIS NAME?" : "ENTER YOUR NAME", CANVAS_W / 2, flow.text(top + 22, 13));
 
   const float cw = 28, ch = 36, gap = 6;
   const float x0 = CANVAS_W / 2 - (NAME_LEN * cw + (NAME_LEN - 1) * gap) / 2;
@@ -391,7 +391,7 @@ static void drawNameEntry(Canvas& ctx, const GameData& g, Flow& flow, float top,
   const float pulse = 0.5f + std::sin(static_cast<float>(nowMs) * 0.008f) * 0.5f;
   for (int i = 0; i < NAME_LEN; i++) {
     const float x = x0 + i * (cw + gap);
-    const bool cur = i == n.cursor;
+    const bool cur = i == n.cursor && !n.confirming;
     ctx.beginPath();
     ctx.roundRect(x, y0, cw, ch, 5);
     ctx.fillStyle(cur ? rgba(68, 170, 255, 0.18f + 0.12f * pulse) : rgba(255, 255, 255, 0.06f));
@@ -414,9 +414,12 @@ static void drawNameEntry(Canvas& ctx, const GameData& g, Flow& flow, float top,
       ctx.fillText("▼", x + cw / 2, y0 + ch + 12);
     }
   }
-  ctx.fillStyle(C("#889"));
-  ctx.font(11);
-  ctx.fillText("↑ ↓ letter  ·  ← → move  ·  B delete  ·  A save", CANVAS_W / 2, flow.text(y0 - flow.shift + ch + 34, 11));
+  const char* help = n.confirming  ? "A \xE2\x80\x94 yes  ·  B \xE2\x80\x94 edit"
+                    : n.emptyHint ? "ENTER A NAME FIRST"
+                                  : "↑ ↓ character  ·  ← → move  ·  B delete  ·  A save";
+  ctx.fillStyle(n.emptyHint ? C("#f66") : n.confirming ? C("#fff") : C("#889"));
+  ctx.font(n.emptyHint || n.confirming ? 13 : 11, n.emptyHint || n.confirming ? Font::Bold : Font::Sans);
+  ctx.fillText(help, CANVAS_W / 2, flow.text(y0 - flow.shift + ch + 34, 11));
 }
 
 void drawGameOver(Canvas& ctx, GameData& g, uint32_t nowMs) {
@@ -504,7 +507,14 @@ void drawGameOver(Canvas& ctx, GameData& g, uint32_t nowMs) {
   ctx.globalAlpha(blink(nowMs));
   ctx.fillStyle(C("#fff"));
   ctx.font(20);
-  ctx.fillText("PRESS A or START to restart", CANVAS_W / 2, flow.text(540, 20));
+  if (isNetGuest(g)) {  // the host restarts or leaves
+    ctx.fillText("WAITING FOR THE HOST…", CANVAS_W / 2, flow.text(540, 20));
+    ctx.globalAlpha(1);
+    ctx.restore();
+    return;
+  }
+  const bool waitingP2 = isNetGame(g) && !g.p2Connected;
+  ctx.fillText(waitingP2 ? "PLAYER 2 LEFT" : "PRESS A or START to restart", CANVAS_W / 2, flow.text(540, 20));
   ctx.globalAlpha(1);
   ctx.fillStyle(C("#889"));
   ctx.font(13);
@@ -598,7 +608,10 @@ void drawMenu(Canvas& ctx, GameData& g, uint32_t nowMs) {
 
   bool startReady = canStartGame(g);
   std::string startText = startReady ? "PRESS A or START" : "UNLOCK SELECTION TO START";
-  if (showCoop && startReady && !g.p2Connected) {
+  if (isNetGuest(g)) {
+    startReady = false;
+    startText = "THE HOST STARTS THE RUN";
+  } else if (showCoop && startReady && !g.p2Connected) {
     startReady = false;
     startText = "WAITING FOR PLAYER 2…";
   }
@@ -644,7 +657,7 @@ void drawMenu(Canvas& ctx, GameData& g, uint32_t nowMs) {
     ctx.font(10);
     if (!craftUnlocked) {
       ctx.fillStyle(canAffordUnlock(craft.coinCost) ? C("#8f8") : C("#f88"));
-      ctx.fillText(std::to_string(craft.coinCost) + " coins \xE2\x80\x94 press Y to unlock", lx, t + 70);
+      ctx.fillText(formatThousands(craft.coinCost) + " coins \xE2\x80\x94 press Y to unlock", lx, t + 70);
     } else {
       ctx.fillStyle(C("#889"));
       char buf[128];
@@ -663,13 +676,33 @@ void drawMenu(Canvas& ctx, GameData& g, uint32_t nowMs) {
     ctx.font(10);
     if (!weaponUnlocked) {
       ctx.fillStyle(canAffordUnlock(weapon.coinCost) ? C("#8f8") : C("#f88"));
-      ctx.fillText(std::to_string(weapon.coinCost) + " coins \xE2\x80\x94 press Y to unlock", lx, t + 51);
+      ctx.fillText(formatThousands(weapon.coinCost) + " coins \xE2\x80\x94 press Y to unlock", lx, t + 51);
     } else {
       ctx.fillStyle(C("#889"));
       ctx.fillText(weapon.tagline, lx, t + 51);
     }
   }
   next(57);
+
+  // auto-fire: bought like a weapon, then switched here or in play
+  if (float t = block(50, 6); t >= 0) {
+    focusBox(MenuRow::AutoFire, t, 50);
+    label("AUTO-FIRE", t + 14);
+    ctx.font(10);
+    if (!isAutoFireUnlocked()) {
+      value(MenuRow::AutoFire, "[LOCKED]", t + 33, 16, C("#888"));
+      ctx.fillStyle(canAffordUnlock(autoFireCost()) ? C("#8f8") : C("#f88"));
+      ctx.font(10);
+      ctx.fillText(formatThousands(autoFireCost()) + " coins \xE2\x80\x94 press Y to unlock", lx, t + 46);
+    } else {
+      value(MenuRow::AutoFire, g.autoFire ? "ON" : "OFF", t + 33, 16, g.autoFire ? C("#4f8") : C("#aac"));
+      ctx.fillStyle(C("#889"));
+      ctx.font(10);
+      ctx.fillText(g.autoFire ? "Fires without holding A \xC2\xB7 Y toggles in play" : "Hold A to fire \xC2\xB7 Y toggles in play",
+                   lx, t + 46);
+    }
+  }
+  next(50);
 
   const DifficultyInfo& diff = difficultyInfo(g.difficulty);
   if (float t = block(53, 6); t >= 0) {
@@ -691,6 +724,25 @@ void drawMenu(Canvas& ctx, GameData& g, uint32_t nowMs) {
         ctx.fillStyle(C("#889"));
         ctx.font(10);
         ctx.fillText(practiceStartWaveLabel(g.practiceStartWave), lx, t + 47);
+      } else if (isNetGame(g)) {
+        const bool guest = isNetGuest(g);
+        const bool ok = g.netStatus == NetStatus::Connected;
+        std::string text;
+        switch (g.netStatus) {
+          case NetStatus::Connected: text = g.netPeerName + (guest ? " (HOST)" : " JOINED"); break;
+          case NetStatus::Waiting: text = "WAITING FOR A PLAYER TO JOIN"; break;
+          case NetStatus::Connecting: text = "CONNECTING TO " + g.netWhere + "…"; break;
+          case NetStatus::Lost: text = "HOST LEFT, RECONNECTING…"; break;
+          case NetStatus::Refused: text = "THE HOST RUNS ANOTHER VERSION"; break;
+          case NetStatus::Off: break;
+        }
+        label(guest ? "NETPLAY \xE2\x80\x94 JOINING" : "NETPLAY \xE2\x80\x94 HOSTING", t + 13);
+        ctx.fillStyle(ok ? C("#8df") : C("#f88"));
+        ctx.font(15, Font::Bold);
+        ctx.fillText(text, lx, t + 33);
+        ctx.fillStyle(C("#889"));
+        ctx.font(10);
+        ctx.fillText(guest ? "Your loadout; the host's difficulty" : "Each player flies their own loadout", lx, t + 47);
       } else {
         label("PLAYER 2", t + 13);
         ctx.fillStyle(g.p2Connected ? C("#8df") : C("#f88"));

@@ -29,7 +29,7 @@ const WeaponDef WEAPONS[] = {
     {WeaponId::Laser, "Laser", "LSR", "Continuous beam ramps damage", C("#f4f"), C("#f8f"), false,
      6000},
     {WeaponId::Homing, "Homing", "HMG", "Slow missiles track targets", C("#f88"), C("#f88"), false,
-     6000},
+     8000},  // 6000 in the original
 };
 
 const ChapterDef CHAPTERS[] = {
@@ -82,6 +82,8 @@ E cycle(E v, int dir) {
 const AircraftDef& getAircraft(AircraftId id) { return AIRCRAFT[static_cast<int>(id)]; }
 AircraftId nextAircraft(AircraftId id, int dir) { return cycle(id, dir); }
 const WeaponDef& getWeapon(WeaponId id) { return WEAPONS[static_cast<int>(id)]; }
+
+int autoFireCost() { return 8000; }  // as the dearest weapon and aircraft
 WeaponId nextWeapon(WeaponId id, int dir) { return cycle(id, dir); }
 const ChapterDef& getChapter(ChapterId id) { return CHAPTERS[static_cast<int>(id)]; }
 const ModeInfo& modeInfo(GameMode m) { return MODES[static_cast<int>(m)]; }

@@ -13,6 +13,9 @@ set_property(CACHE SKYBLASTER_GL PROPERTY STRINGS GLES2 GL2)
 set(SKYBLASTER_DATADIR "${CMAKE_INSTALL_PREFIX}/share/sky-blaster" CACHE PATH "Installed data directory")
 
 find_package(SDL3 REQUIRED CONFIG)
+# netplay (LAN co-op) runs over enet
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(ENET REQUIRED IMPORTED_TARGET libenet)
 
 add_executable(sky-blaster
   src/main.cpp
@@ -34,6 +37,7 @@ add_executable(sky-blaster
   src/game/render_scene.cpp
   src/game/render_world.cpp
   src/game/render_ui.cpp
+  src/net/net.cpp
 )
 
 target_include_directories(sky-blaster PRIVATE
@@ -64,7 +68,7 @@ else()
 endif()
 
 find_package(Threads REQUIRED)
-target_link_libraries(sky-blaster PRIVATE SDL3::SDL3 Threads::Threads m)
+target_link_libraries(sky-blaster PRIVATE SDL3::SDL3 PkgConfig::ENET Threads::Threads m)
 
 install(TARGETS sky-blaster RUNTIME DESTINATION bin)
 install(DIRECTORY data/ DESTINATION share/sky-blaster)

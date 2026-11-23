@@ -9,11 +9,14 @@
 #include <string>
 #include <vector>
 
+#include <unistd.h>
+
 #include "audio.h"
 #include "canvas.h"
 #include "game/game.h"
 #include "gl.h"
 #include "input.h"
+#include "net/net.h"
 #include "prims.h"
 #include "renderer.h"
 
@@ -43,13 +46,17 @@ struct Options {
   bool demoMortal = false;
   std::string saveDir, dataDir, shot;
   int shotFrame = 120;
+  bool netHost = false;  // --netplay-host
+  std::string netJoin;   // --netplay-join ADDRESS
+  std::string nick;      // --nick NAME
 };
 
 void usage() {
   SDL_Log(
       "usage: sky-blaster [--rotate 0|90|180|270] [--turned] [--windowed] [--window WxH] [--save-dir DIR]\n"
       "                   [--data-dir DIR] [--mute] [--show-fps] [--seam Y] [--shot FILE.png] [--shot-frame N]\n"
-      "                   [--demo] [--demo-wave N] [--demo-weapon 0-4] [--demo-mortal]");
+      "                   [--demo] [--demo-wave N] [--demo-weapon 0-4] [--demo-mortal]\n"
+      "                   [--netplay-host | --netplay-join ADDRESS] [--nick NAME]");
 }
 
 bool parse(int argc, char** argv, Options& o) {
@@ -82,6 +89,12 @@ bool parse(int argc, char** argv, Options& o) {
       o.msaa = std::clamp(std::atoi(v), 0, 16);
     }
 
+    else if (a == "--netplay-host") o.netHost = true;
+    else if (a == "--netplay-join" || a == "--nick") {
+      const char* v = value();
+      if (!v) return false;
+      (a == "--nick" ? o.nick : o.netJoin) = v;
+    }
     else if (a == "--demo") o.demo = true;
     else if (a == "--demo-mortal") o.demoMortal = true;
     else if (a == "--save-dir" || a == "--data-dir" || a == "--shot" || a == "--shot-frame" ||
@@ -98,7 +111,7 @@ bool parse(int argc, char** argv, Options& o) {
       return false;
     }
   }
-  return true;
+  return !(o.netHost && !o.netJoin.empty());
 }
 
 std::string findDataDir(const Options& o) {
@@ -263,7 +276,19 @@ int main(int argc, char** argv) {
   restoreMenu(game);  // the choices of the last session
   InputState p1;
   Input input(opt.turned);
-  if (opt.demo) {
+  net::Session session;
+  {
+    std::string nick = opt.nick;
+    if (nick.empty()) {
+      char host[64] = "";
+      if (gethostname(host, sizeof host - 1) == 0) nick = host;
+    }
+    if (opt.netHost && !session.host(game, nick)) SDL_Log("netplay: hosting failed, playing alone");
+    if (!opt.netJoin.empty() && !session.join(game, opt.netJoin, nick)) SDL_Log("netplay: joining failed");
+    if (isNetGame(game)) game.menuRow = MenuRow::Start;
+  }
+  const bool netHost = game.netRole == NetRole::Host, netGuest = game.netRole == NetRole::Guest;
+  if (opt.demo && !isNetGame(game)) {
     game.gameMode = GameMode::Practice;
     game.practiceStartWave = opt.demoWave;
     startRun(game);
@@ -289,8 +314,19 @@ int main(int argc, char** argv) {
     while (SDL_PollEvent(&e))
       if (!input.handleEvent(e, game, p1)) running = false;
     input.poll(game, p1);
+    session.service(game);
+    // --demo hosting: the run starts once player 2 is in (testing)
+    if (opt.demo && netHost && game.state == GameState::Menu && game.p2Connected) startRun(game);
     fieldArea(win, opt.rotate, aw, ah);
-    if (setFieldSize(aw, ah)) refit(game);
+    if (netGuest && session.fieldW() > 0) {
+      // a run's field is the host's: its positions, letterboxed here
+      if (CANVAS_W != session.fieldW() || CANVAS_H != session.fieldH()) {
+        CANVAS_W = session.fieldW(), CANVAS_H = session.fieldH();
+        refit(game);
+      }
+    } else if (setFieldSize(aw, ah)) {
+      refit(game);
+    }
     // the field fills the window, upright when there are two panels
     game.seam = opt.seam > 0 && opt.rotate == 0 && ah > 0 ? opt.seam * CANVAS_H / ah : -1;
     // progress is written when play stops (pause, game over, the title)
@@ -302,10 +338,21 @@ int main(int argc, char** argv) {
     if (!opt.shot.empty()) elapsed = FIXED_TIMESTEP_S;  // deterministic captures
     accumulator += elapsed;
     while (accumulator >= FIXED_TIMESTEP_S) {
-      if (game.state == GameState::Playing) update(game, p1, static_cast<float>(FIXED_TIMESTEP_S));
-      else updateBackground(game, static_cast<float>(FIXED_TIMESTEP_S));
+      const float dt = static_cast<float>(FIXED_TIMESTEP_S);
+      if (netGuest) {
+        // the host simulates; this side predicts its ship and steps the looks
+        session.guestTick(game, p1);
+        updateRemoteView(game, p1, dt);
+      } else if (game.state == GameState::Playing) {
+        fxRecorder = netHost ? session.recorder() : nullptr;  // effects for the guest
+        update(game, p1, dt);
+        fxRecorder = nullptr;
+      } else {
+        updateBackground(game, dt);
+      }
       accumulator -= FIXED_TIMESTEP_S;
     }
+    session.sync(game);
     const uint64_t simmed = SDL_GetTicksNS();
 
     int w = 0, h = 0;
@@ -359,9 +406,10 @@ int main(int argc, char** argv) {
     }
   }
 
-  nameEntryConfirm(game);  // quitting mid-entry still keeps the score
+  nameEntrySaveOnExit(game);  // quitting mid-entry still keeps the score
   rememberMenu(game);      // the menu's choices, even without a run
   progressShutdown();      // and quitting mid-run its kills and coins
+  session.shutdown();
   audio::shutdown();
   SDL_GL_DestroyContext(gl);
   SDL_DestroyWindow(win);

@@ -19,8 +19,13 @@ from.
 
 - **Controllers** drive everything, menus included (the original only read
   a pad during play). The keyboard layout of the original still works.
-- **Co-op Endless is local**: the second controller flies the second ship.
-  The online PartyKit co-op is not ported.
+- **Auto-fire is bought**: it starts locked and costs 8,000 coins, on the
+  title menu's AUTO-FIRE row. Then that row and Y (F) switch it, and the
+  choice is kept. The original had it on for everyone.
+- **Homing costs 8,000 coins** (6,000 in the original), like the Fortress.
+- **Co-op Endless is local or over the network**: a second controller flies
+  the second ship, or a second device does (see Netplay). The online PartyKit
+  co-op is replaced by a direct LAN link, with no server.
 - **Rotation**: `--rotate 90` turns the picture a quarter left, so the
   400×700 play field fills a landscape screen held turned clockwise;
   `--turned` makes player 1's d-pad, sticks and face buttons follow the turn.
@@ -41,11 +46,29 @@ from.
 | L1 / R1 | weapon | |
 | L2 / R2 | difficulty | R2 fires |
 | SELECT + ←→ | practice start wave | toggle invincibility (practice) |
-| A | start | fire (auto-fire is on by default) |
+| A | start | fire (held; auto-fire, bought in the menu, fires for you) |
 | B | | bomb (3 per run, up to 5; the red B power-up adds one) |
 | X | | skill |
-| Y | unlock selection | toggle auto-fire |
+| Y | unlock selection (on AUTO-FIRE: buy it) | toggle auto-fire, once bought |
 | START | start | pause |
+
+## Netplay
+
+`--netplay-host` waits for a player; `--netplay-join ADDRESS` joins a host
+(retrying until it answers); `--nick NAME` is the name the other side sees.
+Both go straight to Co-op Endless, each player with their own aircraft and
+weapon, the host's difficulty applying; the host starts each run.
+
+As upstream, the host runs the game: the guest sends its controls every tick
+and draws the host's snapshots, moving its own ship at once and corrected by
+them. The host also sends the effects its ticks made (particles, rings, score
+popups, sounds), so the guest sees and hears the explosions. Coins,
+achievements and high scores count on the host only. Either side leaving ends
+the run.
+
+It runs over enet (needed to build) on UDP 7071; a host announces itself once
+a second on UDP 7070 (`SKYB`, version, game port, name, players, status;
+little endian) so a frontend can list it. Both sides need the same build.
 
 ## Building
 

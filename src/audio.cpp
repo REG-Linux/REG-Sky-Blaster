@@ -130,39 +130,78 @@ void setMuted(bool muted) { g_muted = muted; }
 
 namespace sfx {
 
-void playShoot() { tone(880, 0.08, Wave::Square, 0.08, 440); }
-void playEnemyShoot() { tone(330, 0.1, Wave::Sawtooth, 0.04, 220); }
-void playHit() { tone(300, 0.1, Wave::Square, 0.08, 150); }
-void playCombo() { tone(1047, 0.08, Wave::Sine, 0.07); }
+namespace {
+// netplay: the host's sounds during a tick, for the guest
+void record(int id) {
+  if (fxRecorder) {
+    FxEvent e{FxEvent::Sound};
+    e.n = id;
+    fxRecorder->push_back(std::move(e));
+  }
+}
+}  // namespace
+
+void playShoot() {
+  record(0);
+  tone(880, 0.08, Wave::Square, 0.08, 440);
+}
+void playEnemyShoot() {
+  record(1);
+  tone(330, 0.1, Wave::Sawtooth, 0.04, 220);
+}
+void playHit() {
+  record(2);
+  tone(300, 0.1, Wave::Square, 0.08, 150);
+}
+void playCombo() {
+  record(3);
+  tone(1047, 0.08, Wave::Sine, 0.07);
+}
 void playMenuSelect() {
+  record(4);
   tone(660, 0.1, Wave::Sine, 0.1);
   tone(880, 0.15, Wave::Sine, 0.1, 0, 0.08);
 }
 void playExplosion() {
+  record(5);
   tone(200, 0.3, Wave::Sawtooth, 0.12, 30);
   tone(150, 0.2, Wave::Square, 0.08, 20, 0.05);
 }
 void playBigExplosion() {
+  record(6);
   tone(150, 0.5, Wave::Sawtooth, 0.15, 20);
   tone(100, 0.4, Wave::Square, 0.1, 15, 0.1);
   tone(80, 0.6, Wave::Triangle, 0.08, 10, 0.15);
 }
 void playPowerUp() {
+  record(7);
   tone(523, 0.1, Wave::Sine, 0.1);
   tone(659, 0.1, Wave::Sine, 0.1, 0, 0.1);
   tone(784, 0.15, Wave::Sine, 0.1, 0, 0.2);
 }
 void playHeal() {
+  record(8);
   tone(440, 0.08, Wave::Sine, 0.1);
   tone(554, 0.08, Wave::Sine, 0.1, 0, 0.08);
   tone(659, 0.08, Wave::Sine, 0.1, 0, 0.16);
   tone(880, 0.2, Wave::Sine, 0.12, 0, 0.24);
 }
-void playGraze() { tone(1200, 0.05, Wave::Sine, 0.06, 800); }
+void playGraze() {
+  record(9);
+  tone(1200, 0.05, Wave::Sine, 0.06, 800);
+}
 void playGameOver() {
+  record(10);
   tone(440, 0.3, Wave::Sine, 0.12, 220);
   tone(330, 0.3, Wave::Sine, 0.12, 165, 0.3);
   tone(262, 0.5, Wave::Sine, 0.12, 131, 0.6);
+}
+
+void play(int id) {
+  using F = void (*)();
+  static constexpr F all[] = {playShoot, playEnemyShoot, playHit, playCombo, playMenuSelect, playExplosion,
+                              playBigExplosion, playPowerUp, playHeal, playGraze, playGameOver};
+  if (id >= 0 && id < static_cast<int>(sizeof all / sizeof all[0])) all[id]();
 }
 
 }  // namespace sfx

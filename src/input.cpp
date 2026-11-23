@@ -9,6 +9,12 @@ constexpr float EDGE_ON = 0.5f, EDGE_OFF = 0.3f;
 
 void menuSound() { sfx::playMenuSelect(); }
 
+// A on the name: the question, or a buzz when it is blank
+void confirmPrompt(GameData& g) {
+  if (nameEntryRequestConfirm(g)) menuSound();
+  else sfx::playHit();
+}
+
 }  // namespace
 
 Input::~Input() {
@@ -100,6 +106,7 @@ bool Input::anyHeld() const {
 // One button press, routed by game state. padIndex 1 is P2.
 void Input::press(GameData& g, InputState& p1, int padIndex, Button b) {
   if (quiet_) return;
+  if (padIndex == 1 && isNetGame(g)) return;  // netplay: P2 is the guest
   InputState& in = padIndex == 1 ? g.p2Input : p1;
   switch (g.state) {
     case GameState::Menu: {
@@ -115,6 +122,10 @@ void Input::press(GameData& g, InputState& p1, int padIndex, Button b) {
           }
           break;
         case North: {
+          if (g.menuRow == MenuRow::AutoFire) {  // that row buys auto-fire, and only it
+            if (unlockAutoFire(g)) sfx::playPowerUp();
+            break;
+          }
           bool a = tryUnlockSelectedAircraft(g);
           bool w = tryUnlockSelectedWeapon(g);
           if (a || w) menuSound();
@@ -130,27 +141,33 @@ void Input::press(GameData& g, InputState& p1, int padIndex, Button b) {
     }
     case GameState::Playing:
       if (padIndex > 1) return;
-      if (b == Start) togglePause(g);
+      if (b == Start) requestPause(g, in);
       else if (b == East) in.bomb = true;
       else if (b == West) in.skill = true;
       else if (b == North) {
-        g.autoFire = !g.autoFire;
-        menuSound();
+        if (toggleAutoFire(g)) menuSound();
+        else sfx::playHit();  // not bought yet
       } else if (b == Back && isPracticeMode(g)) {
         g.practiceInvincible = !g.practiceInvincible;
         menuSound();
       }
       break;
     case GameState::Paused:
-      if (b == Start) togglePause(g);
-      else if (b == Back) {
+      if (b == Start) requestPause(g, in);
+      else if (b == Back && !isNetGuest(g)) {
         returnToMenu(g);
         menuSound();
       }
       break;
     case GameState::GameOver:
+      if (isNetGuest(g)) break;  // the host restarts or leaves
       if (g.nameEntry.active) {
         if (padIndex != 0) return;  // player 1 names the run
+        if (g.nameEntry.confirming) {  // "save this name?"
+          if (b == South || b == Start) nameEntryConfirm(g), sfx::playPowerUp();
+          else if (b == East) nameEntryCancelConfirm(g), menuSound();
+          break;
+        }
         switch (b) {
           case Up: nameEntryCycle(g, 1); break;
           case Down: nameEntryCycle(g, -1); break;
@@ -158,7 +175,7 @@ void Input::press(GameData& g, InputState& p1, int padIndex, Button b) {
           case Right: nameEntryMove(g, 1); break;
           case East: nameEntryBackspace(g); break;
           case South:
-          case Start: nameEntryConfirm(g), sfx::playPowerUp(); break;
+          case Start: confirmPrompt(g); break;
           default: break;
         }
         break;
@@ -228,7 +245,7 @@ bool Input::handleEvent(const SDL_Event& e, GameData& g, InputState& p1) {
     case SDL_EVENT_KEY_UP: keys_[e.key.scancode] = false; break;
     default: break;
   }
-  g.p2Connected = pads_.size() >= 2;
+  if (!isNetGame(g)) g.p2Connected = pads_.size() >= 2;  // netplay: the guest
   return true;
 }
 
@@ -237,16 +254,23 @@ bool Input::keyDown(GameData& g, InputState& p1, SDL_Scancode sc) {
   const bool menu = g.state == GameState::Menu;
   if (quiet_) return true;
   if (g.state == GameState::GameOver && g.nameEntry.active) {
+    if (g.nameEntry.confirming) {
+      if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_KP_ENTER) nameEntryConfirm(g), sfx::playPowerUp();
+      else if (sc == SDL_SCANCODE_ESCAPE || sc == SDL_SCANCODE_BACKSPACE) nameEntryCancelConfirm(g), menuSound();
+      return true;
+    }
     if (sc >= SDL_SCANCODE_A && sc <= SDL_SCANCODE_Z) nameEntryType(g, static_cast<char>('A' + (sc - SDL_SCANCODE_A)));
     else if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_9) nameEntryType(g, static_cast<char>('1' + (sc - SDL_SCANCODE_1)));
     else if (sc == SDL_SCANCODE_0) nameEntryType(g, '0');
     else if (sc == SDL_SCANCODE_SPACE) nameEntryType(g, ' ');
+    else if (sc == SDL_SCANCODE_MINUS || sc == SDL_SCANCODE_KP_MINUS) nameEntryType(g, '-');
+    else if (sc == SDL_SCANCODE_PERIOD || sc == SDL_SCANCODE_KP_PERIOD) nameEntryType(g, '.');
     else if (sc == SDL_SCANCODE_BACKSPACE) nameEntryBackspace(g);
     else if (sc == SDL_SCANCODE_UP) nameEntryCycle(g, 1);
     else if (sc == SDL_SCANCODE_DOWN) nameEntryCycle(g, -1);
     else if (sc == SDL_SCANCODE_LEFT) nameEntryMove(g, -1);
     else if (sc == SDL_SCANCODE_RIGHT) nameEntryMove(g, 1);
-    else if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_KP_ENTER) nameEntryConfirm(g), sfx::playPowerUp();
+    else if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_KP_ENTER) confirmPrompt(g);
     return true;
   }
   switch (sc) {
@@ -254,7 +278,7 @@ bool Input::keyDown(GameData& g, InputState& p1, SDL_Scancode sc) {
       if (menu) return false;
       [[fallthrough]];
     case SDL_SCANCODE_P:
-      togglePause(g);
+      requestPause(g, p1);
       break;
     case SDL_SCANCODE_UP:
     case SDL_SCANCODE_W:
@@ -281,7 +305,7 @@ bool Input::keyDown(GameData& g, InputState& p1, SDL_Scancode sc) {
     case SDL_SCANCODE_X:
     case SDL_SCANCODE_B:
       if (g.state == GameState::Playing) p1.bomb = true;
-      else if (g.state == GameState::GameOver) returnToMenu(g);
+      else if (g.state == GameState::GameOver && !isNetGuest(g)) returnToMenu(g);
       break;
     case SDL_SCANCODE_C:
     case SDL_SCANCODE_LSHIFT:
@@ -289,13 +313,16 @@ bool Input::keyDown(GameData& g, InputState& p1, SDL_Scancode sc) {
       if (g.state == GameState::Playing) p1.skill = true;
       break;
     case SDL_SCANCODE_F:
-      if (g.state == GameState::Playing) g.autoFire = !g.autoFire, menuSound();
+      if (g.state == GameState::Playing) {
+        if (toggleAutoFire(g)) menuSound();
+        else sfx::playHit();  // not bought yet
+      }
       break;
     case SDL_SCANCODE_I:
       if (g.state == GameState::Playing && isPracticeMode(g)) g.practiceInvincible = !g.practiceInvincible, menuSound();
       break;
     case SDL_SCANCODE_Q:
-      if (g.state == GameState::Paused) returnToMenu(g);
+      if (g.state == GameState::Paused && !isNetGuest(g)) returnToMenu(g);
       break;
     default: break;
   }
@@ -306,7 +333,7 @@ void Input::poll(GameData& g, InputState& p1) {
   track(g);
   // at least half a second, then until all is let go
   if (quiet_ && SDL_GetTicks() - quietSince_ >= 500 && !anyHeld()) quiet_ = false;
-  g.p2Connected = pads_.size() >= 2;
+  if (!isNetGame(g)) g.p2Connected = pads_.size() >= 2;
   auto fill = [&](int i, InputState& in, bool withKeys) {
     float x = 0, y = 0;
     if (i < static_cast<int>(pads_.size())) axes(i, x, y);
@@ -324,5 +351,5 @@ void Input::poll(GameData& g, InputState& p1) {
     }
   };
   fill(0, p1, true);
-  fill(1, g.p2Input, false);
+  if (!isNetGame(g)) fill(1, g.p2Input, false);  // netplay: P2's comes from the guest
 }

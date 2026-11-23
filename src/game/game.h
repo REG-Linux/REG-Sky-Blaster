@@ -48,7 +48,7 @@ enum class PowerUpType { Spread, Speed, Shield, Bomb, Heal, Weapon };
 enum class HazardType { Asteroid, Turret, Teleporter, None };
 enum class GameState { Menu, Playing, Paused, GameOver };
 // Title-screen rows the cursor moves between (StartWave only in Practice).
-enum class MenuRow { Mode, Aircraft, Weapon, Difficulty, StartWave, Start };
+enum class MenuRow { Mode, Aircraft, Weapon, AutoFire, Difficulty, StartWave, Start };
 
 struct Particle {
   float x, y, vx, vy, life, maxLife, size;
@@ -125,7 +125,9 @@ struct HighScore {
 constexpr int NAME_LEN = 8;
 constexpr int BOMBS_START = 3, BOMBS_MAX = 5;
 constexpr float HIT_GRACE_S = 3;  // invincible after a hit (2 in the original)
-constexpr const char* NAME_CHARS = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+// the name entry's ↑ ↓ cycle, in this order (all in both fonts; a saved name
+// is the last field of its line, so commas and the like are safe)
+constexpr const char* NAME_CHARS = " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_!?&*+#@'";
 
 // Typing a name for a new high score, on the game-over screen.
 struct NameEntry {
@@ -133,6 +135,8 @@ struct NameEntry {
   std::string buf = std::string(NAME_LEN, ' ');
   int cursor = 0;
   bool fresh = true;  // still the remembered name: typing replaces it whole
+  bool confirming = false;  // A pressed: "save this name?" (A yes, B edit)
+  bool emptyHint = false;   // A on a blank name: asked for one
 };
 
 struct ScreenShake {
@@ -163,7 +167,26 @@ struct Hazard {
 struct InputState {
   bool left = false, right = false, up = false, down = false, shoot = false;
   bool bomb = false, skill = false;  // one-shot, consumed by the sim
+  bool pause = false;                // one-shot: a netplay guest asks the host
 };
+
+// Netplay (LAN co-op): the host runs the game, the guest sends its input
+// and draws the host's snapshots. P2 is always the guest's ship.
+enum class NetRole { None, Host, Guest };
+enum class NetStatus { Off, Waiting, Connecting, Connected, Lost, Refused };
+
+// One cosmetic call the host made during a tick, replayed by the guest.
+struct FxEvent {
+  enum Kind : uint8_t { Particles, Ring, Popup, Sound } kind;
+  float x = 0, y = 0;
+  Color color;
+  float spd = 0, sz0 = 0, sz1 = 0;  // Particles; sz0 = max radius for Ring
+  int n = 0;                         // Particles: count; Sound: sfx id
+  ParticleType type = ParticleType::Explosion;
+  std::string text;                  // Popup
+};
+// While set, the effect functions and sfx append what they do to it.
+inline std::vector<FxEvent>* fxRecorder = nullptr;
 
 struct AchievementToast {
   AchievementId id;
@@ -215,7 +238,7 @@ struct GameData {
   int shotsFired = 0, shotsHit = 0;
   float damageDealt = 0;
   int enemiesKilled = 0;
-  bool autoFire = true;
+  bool autoFire = false;  // bought (autoFireCost), then Y / F or the menu toggle it
   bool showFps = false;  // a frame counter takes the HUD's top line
   float seam = -1;  // field row between two stacked panels (-1: one screen)
   bool practiceInvincible = false;
@@ -223,6 +246,14 @@ struct GameData {
   MenuRow menuRow = MenuRow::Start;
   NameEntry nameEntry;
   int highScoreRank = -1;  // this run's place in the table, -1 none
+  // netplay
+  NetRole netRole = NetRole::None;
+  NetStatus netStatus = NetStatus::Off;
+  std::string netPeerName;  // the other player's
+  std::string netWhere;     // the host's address (guest) / ours (host)
+  AircraftId netP2Aircraft = AircraftId::Falcon;  // the guest's loadout (host)
+  WeaponId netP2Weapon = WeaponId::Standard;
+  int runSerial = 0;  // +1 per run started
 };
 
 // ---- static data (data.cpp) ----
@@ -312,6 +343,11 @@ bool isWeaponUnlocked(WeaponId id);
 bool canAffordUnlock(int cost);
 bool tryUnlockAircraft(AircraftId id);
 bool tryUnlockWeapon(WeaponId id);
+// Auto-fire is bought too (8000, like Homing and the Fortress); its on/off is kept.
+int autoFireCost();
+bool isAutoFireUnlocked();
+bool tryUnlockAutoFire();
+void rememberAutoFire(bool on);
 struct LifetimeStats {
   int enemyKills = 0, bossKills = 0;
 };
@@ -439,6 +475,8 @@ bool canStartGame(const GameData& g);
 void togglePause(GameData& g);
 bool tryUnlockSelectedAircraft(GameData& g);
 bool tryUnlockSelectedWeapon(GameData& g);
+bool unlockAutoFire(GameData& g);  // buys it and turns it on
+bool toggleAutoFire(GameData& g);  // false while locked
 void cycleAircraftSelection(GameData& g, int dir);
 void cycleWeaponSelection(GameData& g, int dir);
 void cycleGameModeSelection(GameData& g, int dir);
@@ -455,9 +493,22 @@ void nameEntryMove(GameData& g, int dir);   // left/right between letters
 void nameEntryCycle(GameData& g, int dir);  // up/down through NAME_CHARS
 void nameEntryType(GameData& g, char c);    // keyboard: set and advance
 void nameEntryBackspace(GameData& g);
-void nameEntryConfirm(GameData& g);
+// A: asks to confirm (false and a hint on a blank name); B there: back to editing
+bool nameEntryRequestConfirm(GameData& g);
+void nameEntryCancelConfirm(GameData& g);
+void nameEntryConfirm(GameData& g);  // saves (never a blank name)
+// quitting mid-entry keeps the score: blank, it gets the last name (or PLAYER)
+void nameEntrySaveOnExit(GameData& g);
 void update(GameData& g, InputState& input, float dt);
 void updateBackground(GameData& g, float dt);
+// netplay
+bool isNetGuest(const GameData& g);
+bool isNetGame(const GameData& g);
+void requestPause(GameData& g, InputState& input);  // a guest asks the host
+void moveShip(Player& p, const InputState& input);  // movement only (prediction)
+// A guest's frame: its ship predicted, particles and backdrop stepped.
+void updateRemoteView(GameData& g, InputState& input, float dt);
+void replayFx(GameData& g, const FxEvent& e);
 
 // ---- render (render_*.cpp) ----
 // Draws the 400x700 play field; the caller sets the transform.
@@ -501,4 +552,5 @@ void playPowerUp();
 void playHeal();
 void playGraze();
 void playGameOver();
+void play(int id);  // by its order above (netplay replay)
 }  // namespace sfx

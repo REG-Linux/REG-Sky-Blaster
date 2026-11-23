@@ -32,6 +32,7 @@ struct Save {
   // the title menu's last choices: mode, aircraft, weapon, difficulty,
   // practice start wave (-1: none yet)
   int menu[5] = {-1, -1, -1, -1, -1};
+  bool autoFireUnlocked = false, autoFireOn = false;
 };
 
 std::string g_path;
@@ -98,6 +99,9 @@ void load() {
       for (int i = 0; i < 5 && std::getline(in, f, ','); i++) g_save.menu[i] = std::atoi(f.c_str());
     } else if (k == "last_name") {
       g_save.lastName = cleanName(v);
+    } else if (k == "auto_fire") {  // locked, off or on
+      g_save.autoFireUnlocked = v == "off" || v == "on";
+      g_save.autoFireOn = v == "on";
     }
   }
   g_save.aircraft[0] = g_save.weapons[0] = true;
@@ -151,6 +155,7 @@ void write() {
   for (const HighScore& h : g_save.highScores)
     out << "highscore=" << h.score << "," << h.wave << "," << h.date << "," << h.name << "\n";
   out << "last_name=" << g_save.lastName << "\n";
+  out << "auto_fire=" << (!g_save.autoFireUnlocked ? "locked" : g_save.autoFireOn ? "on" : "off") << "\n";
   out << "menu=" << g_save.menu[0] << "," << g_save.menu[1] << "," << g_save.menu[2] << "," << g_save.menu[3]
       << "," << g_save.menu[4] << "\n";
   {
@@ -202,8 +207,11 @@ void progressShutdown() {
 }
 
 void rememberMenu(const GameData& g) {
-  const int now[5] = {static_cast<int>(g.gameMode), static_cast<int>(g.selectedAircraft),
-                      static_cast<int>(g.selectedWeapon), static_cast<int>(g.difficulty), g.practiceStartWave};
+  int now[5] = {static_cast<int>(g.gameMode), static_cast<int>(g.selectedAircraft),
+                static_cast<int>(g.selectedWeapon), static_cast<int>(g.difficulty), g.practiceStartWave};
+  // netplay forces co-op (and the host's difficulty): not the next solo game's
+  if (isNetGame(g)) now[0] = g_save.menu[0];
+  if (isNetGuest(g)) now[3] = g_save.menu[3];
   if (std::equal(now, now + 5, g_save.menu)) return;
   std::copy(now, now + 5, g_save.menu);
   store();
@@ -219,6 +227,7 @@ void restoreMenu(GameData& g) {
   if (m[3] >= 0 && m[3] < static_cast<int>(Difficulty::Count)) g.difficulty = static_cast<Difficulty>(m[3]);
   if (m[4] >= 1 && m[4] <= 20) g.practiceStartWave = m[4];
   g.player = createPlayer(g.selectedAircraft, g.selectedWeapon);  // as the menu does
+  g.autoFire = g_save.autoFireUnlocked && g_save.autoFireOn;
 }
 
 int loadCoins() { return g_save.coins; }
@@ -250,6 +259,22 @@ bool tryUnlockWeapon(WeaponId id) {
   g_save.weapons[static_cast<int>(id)] = true;
   store();
   return true;
+}
+
+bool isAutoFireUnlocked() { return g_save.autoFireUnlocked; }
+
+bool tryUnlockAutoFire() {
+  if (g_save.autoFireUnlocked) return true;
+  if (!spendCoins(autoFireCost())) return false;
+  g_save.autoFireUnlocked = true;
+  store();
+  return true;
+}
+
+void rememberAutoFire(bool on) {
+  if (!g_save.autoFireUnlocked || g_save.autoFireOn == on) return;
+  g_save.autoFireOn = on;
+  store();
 }
 
 LifetimeStats recordEnemyKill(bool isBoss) {

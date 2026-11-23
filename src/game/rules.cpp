@@ -217,6 +217,10 @@ void shake(GameData& g, float intensity, float duration) {
 
 void addParticles(GameData& g, float x, float y, int n, Color color, float spd, ParticleType type,
                   float sz0, float sz1) {
+  if (fxRecorder) {
+    FxEvent e{FxEvent::Particles, x, y, color, spd, sz0, sz1, n, type};
+    fxRecorder->push_back(std::move(e));
+  }
   for (int i = 0; i < n && g.particles.size() < MAX_PARTICLES; i++) {
     float a = frand() * PI * 2;
     float s = (0.5f + frand()) * spd;
@@ -228,13 +232,29 @@ void addParticles(GameData& g, float x, float y, int n, Color color, float spd, 
 }
 
 void addRing(GameData& g, float x, float y, Color color, float maxR) {
+  if (fxRecorder) fxRecorder->push_back({FxEvent::Ring, x, y, color, 0, maxR});
   if (g.particles.size() >= MAX_PARTICLES) return;
   g.particles.push_back({x, y, 0, 0, 0.4f, 0.4f, 2, color, ParticleType::Ring, {}, maxR});
 }
 
 void addScorePopup(GameData& g, float x, float y, const std::string& text, Color color) {
+  if (fxRecorder) {
+    FxEvent e{FxEvent::Popup, x, y, color};
+    e.text = text;
+    fxRecorder->push_back(std::move(e));
+  }
   if (g.particles.size() >= MAX_PARTICLES) return;
   g.particles.push_back({x, y, (frand() - 0.5f) * 0.5f, -1.5f, 0.8f, 0.8f, 12, color, ParticleType::Score, text, 0});
+}
+
+// The guest draws and plays what the host's tick did.
+void replayFx(GameData& g, const FxEvent& e) {
+  switch (e.kind) {
+    case FxEvent::Particles: addParticles(g, e.x, e.y, e.n, e.color, e.spd, e.type, e.sz0, e.sz1); break;
+    case FxEvent::Ring: addRing(g, e.x, e.y, e.color, e.sz0); break;
+    case FxEvent::Popup: addScorePopup(g, e.x, e.y, e.text, e.color); break;
+    case FxEvent::Sound: sfx::play(e.n); break;
+  }
 }
 
 // ---- run progress ----

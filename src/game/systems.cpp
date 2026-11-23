@@ -18,21 +18,19 @@ void clampToField(Player& p) {
 
 // One ship from its input. The original drives the co-op guest with a
 // trimmed copy (no skills); local co-op gives both ships the full set.
-void updateShip(GameData& g, Player& p, InputState& input, float dt) {
-  float mx = 0, my = 0;
-  if (input.left) mx--;
-  if (input.right) mx++;
-  if (input.up) my--;
-  if (input.down) my++;
-  if (mx != 0 || my != 0) {
-    float l = std::sqrt(mx * mx + my * my);
-    p.x += mx / l * p.speed;
-    p.y += my / l * p.speed;
-  }
-  clampToField(p);
-  p.tilt += (mx * 0.6f - p.tilt) * 0.15f;
+void stickOf(const InputState& input, float& mx, float& my) {
+  mx = static_cast<float>(input.right) - static_cast<float>(input.left);
+  my = static_cast<float>(input.down) - static_cast<float>(input.up);
+}
 
-  const bool shooting = g.autoFire || input.shoot;
+void updateShip(GameData& g, Player& p, InputState& input, float dt) {
+  float mx, my;
+  stickOf(input, mx, my);
+  moveShip(p, input);
+
+  // netplay: the guest's shoot already holds its own auto-fire
+  const bool remote = isNetGame(g) && &p != &g.player;
+  const bool shooting = input.shoot || (g.autoFire && !remote);
   if (p.weaponId == WeaponId::Laser) {
     updateLaserFire(g, shooting, dt, p);
   } else if (shooting) {
@@ -242,6 +240,38 @@ void stepBackdrop(GameData& g, float tm) {
 }
 
 }  // namespace
+
+void moveShip(Player& p, const InputState& input) {
+  float mx, my;
+  stickOf(input, mx, my);
+  if (mx != 0 || my != 0) {
+    float l = std::sqrt(mx * mx + my * my);
+    p.x += mx / l * p.speed;
+    p.y += my / l * p.speed;
+  }
+  clampToField(p);
+  p.tilt += (mx * 0.6f - p.tilt) * 0.15f;
+}
+
+void updateRemoteView(GameData& g, InputState& input, float dt) {
+  if (g.state != GameState::Playing) {
+    updateBackgroundAmbient(g, dt);
+    return;
+  }
+  g.frameCount++;
+  tickAchievementToast(g, dt);
+  // the guest's own ship moves at once; the host's snapshots correct it
+  if (g.player2) moveShip(*g.player2, input);
+  const float tm = g.slowMotion;
+  const Player& me = g.player2 ? *g.player2 : g.player;
+  float hpRatio = static_cast<float>(me.hp) / me.maxHp;
+  if (hpRatio <= 0.34f) g.dangerAlpha = 0.15f + std::sin(g.frameCount * 0.08f) * 0.1f;
+  else g.dangerAlpha *= 0.9f;
+  if (g.screenShake.timer > 0) g.screenShake.timer--;
+  if (g.flashAlpha > 0) g.flashAlpha = std::max(0.0f, g.flashAlpha - 0.04f);
+  stepParticles(g, dt, tm, true);
+  stepBackdrop(g, tm);
+}
 
 float tickSlowMotion(GameData& g, float dt) {
   if (g.slowMotionTimer > 0) {

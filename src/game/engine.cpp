@@ -1,5 +1,5 @@
-// engine.ts and player-factory.ts (the coop network bits dropped; co-op
-// is local, the second ship driven by a second controller).
+// engine.ts and player-factory.ts. Co-op is local (a second controller)
+// or netplay (net/net.cpp: the guest's ship is P2 on the host).
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -52,6 +52,14 @@ bool canStartGame(const GameData& g) {
   return isAircraftUnlocked(g.selectedAircraft) && isWeaponUnlocked(g.selectedWeapon);
 }
 
+bool isNetGuest(const GameData& g) { return g.netRole == NetRole::Guest; }
+bool isNetGame(const GameData& g) { return g.netRole != NetRole::None; }
+
+void requestPause(GameData& g, InputState& input) {
+  if (isNetGuest(g)) input.pause = true;  // the host pauses both
+  else togglePause(g);
+}
+
 void togglePause(GameData& g) {
   if (g.state == GameState::Playing) g.state = GameState::Paused;
   else if (g.state == GameState::Paused) g.state = GameState::Playing;
@@ -66,6 +74,20 @@ bool tryUnlockSelectedAircraft(GameData& g) {
 }
 
 bool tryUnlockSelectedWeapon(GameData& g) { return tryUnlockWeapon(g.selectedWeapon); }
+
+bool unlockAutoFire(GameData& g) {
+  if (isAutoFireUnlocked() || !tryUnlockAutoFire()) return false;
+  g.autoFire = true;
+  rememberAutoFire(true);
+  return true;
+}
+
+bool toggleAutoFire(GameData& g) {
+  if (!isAutoFireUnlocked()) return false;
+  g.autoFire = !g.autoFire;
+  rememberAutoFire(g.autoFire);
+  return true;
+}
 
 void cycleAircraftSelection(GameData& g, int dir) {
   g.selectedAircraft = nextAircraft(g.selectedAircraft, dir);
@@ -144,12 +166,16 @@ void resetGame(GameData& g) {
 
 bool startRun(GameData& g) {
   if (!canStartGame(g)) return false;
+  if (isNetGuest(g)) return false;  // the host starts the runs
   if (isCoopMode(g) && !g.p2Connected) return false;
   rememberMenu(g);
   resetGame(g);
+  g.runSerial++;
   if (isCoopMode(g)) {
-    // P2 flies the same loadout; seat colours tell the ships apart
-    g.player2 = createPlayer(g.selectedAircraft, g.selectedWeapon);
+    // local: P2 flies the same loadout, seat colours tell the ships apart;
+    // netplay: the guest's own
+    g.player2 = isNetGame(g) ? createPlayer(g.netP2Aircraft, g.netP2Weapon)
+                             : createPlayer(g.selectedAircraft, g.selectedWeapon);
     int bonus = getPlayerHpBonus(g);
     g.player2->hp += bonus;
     g.player2->maxHp += bonus;
@@ -179,7 +205,8 @@ void returnToMenu(GameData& g) {
 }
 
 static std::vector<MenuRow> menuRows(const GameData& g) {
-  std::vector<MenuRow> rows = {MenuRow::Start, MenuRow::Mode, MenuRow::Aircraft, MenuRow::Weapon, MenuRow::Difficulty};
+  std::vector<MenuRow> rows = {MenuRow::Start,    MenuRow::Mode,      MenuRow::Aircraft,
+                              MenuRow::Weapon,   MenuRow::AutoFire,  MenuRow::Difficulty};
   if (isPracticeMode(g)) rows.push_back(MenuRow::StartWave);
   return rows;
 }
@@ -194,11 +221,16 @@ void menuMove(GameData& g, int dir) {
 
 void menuChange(GameData& g, int dir) {
   switch (g.menuRow) {
-    case MenuRow::Mode: cycleGameModeSelection(g, dir); break;
+    case MenuRow::Mode:
+      if (!isNetGame(g)) cycleGameModeSelection(g, dir);  // netplay is co-op
+      break;
     case MenuRow::Aircraft: cycleAircraftSelection(g, dir); break;
     case MenuRow::Weapon: cycleWeaponSelection(g, dir); break;
-    case MenuRow::Difficulty: cycleDifficultySelection(g, dir); break;
+    case MenuRow::Difficulty:
+      if (!isNetGuest(g)) cycleDifficultySelection(g, dir);  // the host's applies
+      break;
     case MenuRow::StartWave: cyclePracticeStartWave(g, dir); break;
+    case MenuRow::AutoFire: toggleAutoFire(g); break;
     case MenuRow::Start: break;
   }
 }
@@ -217,15 +249,21 @@ void endRunScores(GameData& g) {
   if (last.empty()) n.buf[0] = 'A';
 }
 
+static bool blankName(const NameEntry& n) { return n.buf.find_first_not_of(' ') == std::string::npos; }
+
 void nameEntryMove(GameData& g, int dir) {
   NameEntry& n = g.nameEntry;
+  if (n.confirming) return;
   n.fresh = false;
+  n.emptyHint = false;
   n.cursor = std::clamp(n.cursor + dir, 0, NAME_LEN - 1);
 }
 
 void nameEntryCycle(GameData& g, int dir) {
   NameEntry& n = g.nameEntry;
+  if (n.confirming) return;
   n.fresh = false;
+  n.emptyHint = false;
   const std::string chars = NAME_CHARS;
   const int count = static_cast<int>(chars.size());
   int i = static_cast<int>(chars.find(n.buf[n.cursor]));
@@ -235,6 +273,7 @@ void nameEntryCycle(GameData& g, int dir) {
 
 void nameEntryType(GameData& g, char c) {
   NameEntry& n = g.nameEntry;
+  if (n.confirming) return;
   if (n.fresh) {
     n.buf.assign(NAME_LEN, ' ');
     n.cursor = 0;
@@ -245,16 +284,45 @@ void nameEntryType(GameData& g, char c) {
 
 void nameEntryBackspace(GameData& g) {
   NameEntry& n = g.nameEntry;
+  if (n.confirming) return;
   n.fresh = false;
+  n.emptyHint = false;
   // on a blank slot, step back first: deletes the letter before, like a text field
   if (n.buf[n.cursor] == ' ') nameEntryMove(g, -1);
   n.buf[n.cursor] = ' ';
 }
 
+bool nameEntryRequestConfirm(GameData& g) {
+  NameEntry& n = g.nameEntry;
+  if (!n.active || n.confirming) return false;
+  n.emptyHint = blankName(n);
+  n.confirming = !n.emptyHint;
+  return n.confirming;
+}
+
+void nameEntryCancelConfirm(GameData& g) { g.nameEntry.confirming = false; }
+
 void nameEntryConfirm(GameData& g) {
-  if (!g.nameEntry.active) return;
-  g.nameEntry.active = false;
-  g.highScoreRank = saveHighScore(g.score, g.wave, g.nameEntry.buf);
+  NameEntry& n = g.nameEntry;
+  if (!n.active) return;
+  if (blankName(n)) {
+    n.confirming = false;
+    n.emptyHint = true;
+    return;
+  }
+  n.active = n.confirming = false;
+  g.highScoreRank = saveHighScore(g.score, g.wave, n.buf);
+}
+
+void nameEntrySaveOnExit(GameData& g) {
+  NameEntry& n = g.nameEntry;
+  if (!n.active) return;
+  if (blankName(n)) {
+    const std::string& last = lastHighScoreName();
+    n.buf = last.empty() ? "PLAYER" : last;
+  }
+  n.confirming = true;
+  nameEntryConfirm(g);
 }
 
 void update(GameData& g, InputState& input, float dt) {
