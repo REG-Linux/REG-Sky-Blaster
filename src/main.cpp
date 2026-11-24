@@ -148,10 +148,15 @@ void fieldArea(SDL_Window* win, int rotate, float& aw, float& ah) {
   ah = static_cast<float>(rotate == 90 || rotate == 270 ? w : h);
 }
 
-// A new screen shape: re-lay the field (stars for its area, ships inside).
-void refit(GameData& g) {
+// A new field size (was oldW x oldH): re-lay it (stars for its area, the
+// ships where they were across it and as far from the bottom, inside).
+void refit(GameData& g, float oldW, float oldH) {
   applyChapterToGame(g, g.chapterId);
   for (Player* p : activePlayers(g)) {
+    if (oldW > 0 && oldH > 0) {
+      p->x *= CANVAS_W / oldW;
+      p->y = CANVAS_H - (oldH - p->y);
+    }
     p->x = std::fmin(std::fmax(p->x, p->width / 2), CANVAS_W - p->width / 2);
     p->y = std::fmin(std::fmax(p->y, p->height / 2), CANVAS_H - p->height / 2);
   }
@@ -309,26 +314,44 @@ int main(int argc, char** argv) {
   char shownFps[16] = "";
   int frame = 0;
   bool running = true;
+  uint64_t hostLeftAt = 0;  // netplay guest: when the host left
   while (running) {
     SDL_Event e;
     while (SDL_PollEvent(&e))
       if (!input.handleEvent(e, game, p1)) running = false;
     input.poll(game, p1);
     session.service(game);
+    // a guest whose host has gone has nothing left to do: back to the frontend
+    // after the message
+    if (netGuest && game.netStatus == NetStatus::Lost) {
+      if (!hostLeftAt) hostLeftAt = SDL_GetTicks();
+      else if (SDL_GetTicks() - hostLeftAt >= 3000) running = false;
+    }
     // --demo hosting: the run starts once player 2 is in (testing)
     if (opt.demo && netHost && game.state == GameState::Menu && game.p2Connected) startRun(game);
     fieldArea(win, opt.rotate, aw, ah);
-    if (netGuest && session.fieldW() > 0) {
-      // a run's field is the host's: its positions, letterboxed here
-      if (CANVAS_W != session.fieldW() || CANVAS_H != session.fieldH()) {
-        CANVAS_W = session.fieldW(), CANVAS_H = session.fieldH();
-        refit(game);
+    {
+      // the field: this screen's own; in a netplay run the one both screens
+      // share (the host's choice, sent with each start), letterboxed here
+      float fw, fh;
+      fieldFor(aw, ah, fw, fh);
+      session.setOwnField(fw, fh);
+      if (netGuest && session.fieldW() > 0) fw = session.fieldW(), fh = session.fieldH();
+      else if (netHost && game.state != GameState::Menu) session.commonField(fw, fh);
+      if (fw != CANVAS_W || fh != CANVAS_H) {
+        const float oldW = CANVAS_W, oldH = CANVAS_H;
+        CANVAS_W = fw, CANVAS_H = fh;
+        refit(game, oldW, oldH);
       }
-    } else if (setFieldSize(aw, ah)) {
-      refit(game);
     }
-    // the field fills the window, upright when there are two panels
-    game.seam = opt.seam > 0 && opt.rotate == 0 && ah > 0 ? opt.seam * CANVAS_H / ah : -1;
+    // where two upright panels meet, in field rows (past the bars of a
+    // letterboxed field: -1 when the seam is not on it)
+    game.seam = -1;
+    if (opt.seam > 0 && opt.rotate == 0 && ah > 0) {
+      const float s = std::fmin(aw / CANVAS_W, ah / CANVAS_H);
+      const float row = (opt.seam - (ah - CANVAS_H * s) / 2) / s;
+      if (row > 0 && row < CANVAS_H) game.seam = row;
+    }
     // progress is written when play stops (pause, game over, the title)
     progressDefer(game.state == GameState::Playing);
 

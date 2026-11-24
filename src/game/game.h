@@ -22,6 +22,8 @@ inline float CANVAS_W = BASE_W;
 inline float CANVAS_H = BASE_H;
 // Sets the field for a screen area of w x h; true when it changed.
 bool setFieldSize(float w, float h);
+// The field a screen area of w x h gives (what setFieldSize would set).
+void fieldFor(float w, float h, float& fw, float& fh);
 constexpr float PLAYER_W = 32;
 constexpr float PLAYER_H = 36;
 constexpr size_t MAX_PARTICLES = 600;

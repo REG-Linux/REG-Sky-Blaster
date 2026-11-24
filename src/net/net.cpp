@@ -19,7 +19,7 @@ namespace net {
 namespace {
 
 constexpr uint32_t MAGIC = 0x42594B53;  // "SKYB", little endian
-constexpr uint16_t VERSION = 1;
+constexpr uint16_t VERSION = 2;  // 2: the hello carries the screen's field
 constexpr size_t NAME_MAX = 24;
 constexpr uint32_t PEER_TIMEOUT_MS = 6000;  // a silent peer is gone after this
 enum Channel : uint8_t { Reliable, Unreliable, ChannelCount };
@@ -195,6 +195,9 @@ void Session::sendHello() {
   w.put(layout());
   w.u8(static_cast<unsigned>(sentAircraft_ == AircraftId::Count ? AircraftId::Falcon : sentAircraft_));
   w.u8(static_cast<unsigned>(sentWeapon_ == WeaponId::Count ? WeaponId::Standard : sentWeapon_));
+  sentW_ = ownW_, sentH_ = ownH_;
+  w.put(ownW_);
+  w.put(ownH_);
   w.str(name_);
   send(w.b, true);
 }
@@ -255,6 +258,7 @@ void Session::onDisconnect(GameData& g, ENetPeer* peer) {
 // The other player is gone: a run in progress ends.
 void Session::lose(GameData& g, NetStatus why) {
   g.netStatus = why;
+  peerW_ = peerH_ = 0;
   g.netPeerName.clear();
   g.p2Connected = false;
   log_.clear();
@@ -278,6 +282,7 @@ void Session::onReceive(GameData& g, ENetPeer* peer, const uint8_t* data, size_t
       const uint16_t version = r.get<uint16_t>();
       const uint32_t lay = r.get<uint32_t>();
       const unsigned aircraft = r.u8(), weapon = r.u8();
+      const float fieldW = r.get<float>(), fieldH = r.get<float>();
       std::string name = r.str();
       if (!r.ok || magic != MAGIC) return;
       if (version != VERSION || lay != layout()) {
@@ -299,6 +304,9 @@ void Session::onReceive(GameData& g, ENetPeer* peer, const uint8_t* data, size_t
       if (isHost_) {
         g.netP2Aircraft = inRange<AircraftId>(aircraft) ? static_cast<AircraftId>(aircraft) : AircraftId::Falcon;
         g.netP2Weapon = inRange<WeaponId>(weapon) ? static_cast<WeaponId>(weapon) : WeaponId::Standard;
+        // its screen's field (sane, or none: the host's own then)
+        const bool sane = fieldW >= BASE_W && fieldH >= BASE_H && fieldW < 10000 && fieldH < 10000;
+        peerW_ = sane ? fieldW : 0, peerH_ = sane ? fieldH : 0;
         if (!helloed_) {
           helloed_ = true;
           sendHello();  // our name back
@@ -608,12 +616,19 @@ void Session::sync(GameData& g) {
     // the loadout we would fly, as the menu changes it
     const AircraftId a = canStartGame(g) ? g.selectedAircraft : AircraftId::Falcon;
     const WeaponId w = canStartGame(g) ? g.selectedWeapon : WeaponId::Standard;
-    if (a != sentAircraft_ || w != sentWeapon_) {
+    if (a != sentAircraft_ || w != sentWeapon_ || ownW_ != sentW_ || ownH_ != sentH_) {
       sentAircraft_ = a, sentWeapon_ = w;
       sendHello();
     }
   }
   enet_host_flush(enet_);
+}
+
+bool Session::commonField(float& w, float& h) const {
+  if (!isHost_ || !helloed_ || peerW_ <= 0 || ownW_ <= 0) return false;
+  w = std::min(ownW_, peerW_);
+  h = std::min(ownH_, peerH_);
+  return true;
 }
 
 // Once a second, to every IPv4 broadcast address (and the limited one):

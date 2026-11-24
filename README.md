@@ -62,9 +62,15 @@ weapon, the host's difficulty applying; the host starts each run.
 As upstream, the host runs the game: the guest sends its controls every tick
 and draws the host's snapshots, moving its own ship at once and corrected by
 them. The host also sends the effects its ticks made (particles, rings, score
-popups, sounds), so the guest sees and hears the explosions. Coins,
-achievements and high scores count on the host only. Either side leaving ends
-the run.
+popups, sounds), so the guest sees and hears the explosions. Coins and
+achievements count on the host only; co-op scores, local or netplay, stay out
+of the high-score table. Either side leaving ends the run, and a guest whose
+host has left quits.
+
+A run's field is the one both screens share: the narrower and shorter of the
+field each would have alone, so a landscape screen and a portrait one (or two
+stacked panels) both play close to the original 400×700, the other with bars
+at most. Each keeps its own rotation.
 
 It runs over enet (needed to build) on UDP 7071; a host announces itself once
 a second on UDP 7070 (`SKYB`, version, game port, name, players, status;

@@ -35,6 +35,12 @@ class Session {
   void guestTick(GameData& g, InputState& in);
   // Once per frame, after the ticks: the host sends what changed.
   void sync(GameData& g);
+  // The field this screen would have alone (sent with the hello).
+  void setOwnField(float w, float h) { ownW_ = w, ownH_ = h; }
+  // Host, with a guest: the field a run shares, the narrower and shorter of
+  // the two screens' own (no tiny picture or one across a seam on either).
+  // False (w, h untouched) without one.
+  bool commonField(float& w, float& h) const;
   void shutdown();
 
  private:
@@ -73,6 +79,9 @@ class Session {
   AircraftId sentAircraft_ = AircraftId::Count;
   WeaponId sentWeapon_ = WeaponId::Count;
   float fieldW_ = 0, fieldH_ = 0;  // the host's field, during a run
+  float ownW_ = 0, ownH_ = 0;      // ours alone
+  float peerW_ = 0, peerH_ = 0;    // the guest's own (host)
+  float sentW_ = 0, sentH_ = 0;    // the field our last hello carried
 
  public:
   // The guest draws the host's field (letterboxed): 0 when it is free.

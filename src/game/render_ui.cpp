@@ -732,7 +732,7 @@ void drawMenu(Canvas& ctx, GameData& g, uint32_t nowMs) {
           case NetStatus::Connected: text = g.netPeerName + (guest ? " (HOST)" : " JOINED"); break;
           case NetStatus::Waiting: text = "WAITING FOR A PLAYER TO JOIN"; break;
           case NetStatus::Connecting: text = "CONNECTING TO " + g.netWhere + "…"; break;
-          case NetStatus::Lost: text = "HOST LEFT, RECONNECTING…"; break;
+          case NetStatus::Lost: text = "THE HOST LEFT"; break;
           case NetStatus::Refused: text = "THE HOST RUNS ANOTHER VERSION"; break;
           case NetStatus::Off: break;
         }

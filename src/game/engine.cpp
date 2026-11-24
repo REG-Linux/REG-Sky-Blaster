@@ -25,10 +25,17 @@ Player createPlayer(AircraftId a, WeaponId w) {
   return p;
 }
 
+void fieldFor(float w, float h, float& fw, float& fh) {
+  fw = BASE_W, fh = BASE_H;
+  if (w <= 0 || h <= 0) return;
+  const float s = std::fmin(w / BASE_W, h / BASE_H);
+  fw = std::round(w / s), fh = std::round(h / s);
+}
+
 bool setFieldSize(float w, float h) {
   if (w <= 0 || h <= 0) return false;
-  const float s = std::fmin(w / BASE_W, h / BASE_H);
-  const float fw = std::round(w / s), fh = std::round(h / s);
+  float fw, fh;
+  fieldFor(w, h, fw, fh);
   if (fw == CANVAS_W && fh == CANVAS_H) return false;
   CANVAS_W = fw;
   CANVAS_H = fh;
@@ -238,7 +245,8 @@ void menuChange(GameData& g, int dir) {
 void endRunScores(GameData& g) {
   g.highScoreRank = -1;
   g.nameEntry = {};
-  if (isPracticeMode(g) || !qualifiesForHighScore(g.score)) return;
+  // practice and co-op scores stay out of the (single-player) table
+  if (isPracticeMode(g) || isCoopMode(g) || !qualifiesForHighScore(g.score)) return;
   // start from the last name, cursor on its last letter, so a returning
   // player only confirms
   NameEntry& n = g.nameEntry;
